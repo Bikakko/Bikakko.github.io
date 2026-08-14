@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Moments</title>
+    <meta name="description" content="Personal Space & Interactive Portal">
+    <link rel="icon" href="./assets/images/favicon.jpg" type="image/jpeg">
+    <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+    <!-- 3D Three.js WebGL 夜空背景容器 -->
+    <div id="home-scene" class="home-scene" aria-hidden="true"></div>
+
+    <!-- 主界面布局 -->
+    <main class="home-shell">
+        <!-- 隐蔽入口 (动态定位贴合月球) -->
+        <header class="home-hero">
+            <a id="secret-entry" class="secret-entry" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open hidden entry">
+                <img
+                    id="secret-entry-image"
+                    src="./assets/images/secret-entry.gif"
+                    data-fallback-src="./assets/images/favicon.jpg"
+                    alt=""
+                >
+            </a>
+        </header>
+
+        <!-- 卡片导航展示区 -->
+        <section class="home-preview" aria-label="Navigation Cards">
+            <div id="cards-grid" class="home-grid"></div>
+            <div id="cards-empty" class="home-empty" hidden>暂无展示卡片</div>
+        </section>
+    </main>
+
+    <!-- 逻辑脚本 -->
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
