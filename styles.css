@@ -47,6 +47,10 @@ body {
     transform: translate(-50%, -50%);
     transition: transform 0.18s ease, opacity 0.2s ease;
     text-decoration: none;
+    cursor: grab;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
 }
 
 .secret-entry:hover,
@@ -62,6 +66,40 @@ body {
     object-fit: cover;
     opacity: 0;
     border: 0;
+}
+
+/* 被"揪出来"的幽灵图 (拖拽时跟随光标) */
+.secret-entry-ghost {
+    position: fixed;
+    left: 0;
+    top: 0;
+    z-index: 40;
+    border-radius: 999px;
+    object-fit: cover;
+    opacity: 0.8;
+    pointer-events: none;
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-user-drag: none;
+    transform: translate(-50%, -50%);
+    filter: drop-shadow(0 14px 30px rgba(2, 6, 23, 0.55));
+    animation: secret-ghost-in 0.18s ease-out;
+}
+
+@keyframes secret-ghost-in {
+    from {
+        opacity: 0;
+        transform: translate(-50%, -50%) scale(0.72);
+    }
+    to {
+        opacity: 0.8;
+        transform: translate(-50%, -50%) scale(1);
+    }
+}
+
+body.secret-dragging,
+body.secret-dragging * {
+    cursor: grabbing !important;
 }
 
 /* Main UI Shell */

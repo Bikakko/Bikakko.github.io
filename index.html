@@ -6,7 +6,7 @@
     <title>Moments</title>
     <meta name="description" content="Personal Space & Interactive Portal">
     <link rel="icon" href="./assets/images/favicon.jpg" type="image/jpeg">
-    <link rel="stylesheet" href="./styles.css?v=glass4">
+    <link rel="stylesheet" href="./styles.css?v=glass5">
 </head>
 <body>
     <!-- 3D Three.js WebGL 夜空背景容器 -->
@@ -16,12 +16,13 @@
     <main class="home-shell">
         <!-- 隐蔽入口 (动态定位贴合月球) -->
         <header class="home-hero">
-            <a id="secret-entry" class="secret-entry" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open hidden entry">
+            <a id="secret-entry" class="secret-entry" href="#" target="_blank" rel="noopener noreferrer" aria-label="Open hidden entry" draggable="false">
                 <img
                     id="secret-entry-image"
                     src="./assets/images/secret-entry.gif"
                     data-fallback-src="./assets/images/favicon.jpg"
                     alt=""
+                    draggable="false"
                 >
             </a>
         </header>
@@ -34,6 +35,6 @@
     </main>
 
     <!-- 逻辑脚本 -->
-    <script type="module" src="./main.js"></script>
+    <script type="module" src="./main.js?v=glass5"></script>
 </body>
 </html>

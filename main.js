@@ -9,6 +9,7 @@ import { SITE_CONFIG } from "./config.js";
     const secretEntryImage = document.getElementById("secret-entry-image");
 
     let disposeScene = null;
+    let secretEntryDragged = false;
 
     // 1. 初始化页面元数据与卡片
     function initMetaAndCards() {
@@ -78,6 +79,99 @@ import { SITE_CONFIG } from "./config.js";
                 }
             });
         }
+
+        initSecretEntryDrag();
+    }
+
+    // 2.1 月亮上的图可以按住"揪出来"：拖动时生成跟随光标的幽灵图
+    function initSecretEntryDrag() {
+        if (!secretEntry || !secretEntryImage) return;
+
+        secretEntry.draggable = false;
+        secretEntryImage.draggable = false;
+        secretEntry.addEventListener("dragstart", (event) => event.preventDefault());
+
+        let drag = null;
+
+        function createGhost() {
+            const rect = secretEntry.getBoundingClientRect();
+            const size = Math.round(Math.max(rect.width, rect.height) || 60);
+            const ghost = document.createElement("img");
+            ghost.className = "secret-entry-ghost";
+            ghost.src = secretEntryImage.currentSrc || secretEntryImage.src;
+            ghost.alt = "";
+            ghost.draggable = false;
+            ghost.setAttribute("aria-hidden", "true");
+            ghost.style.width = `${size}px`;
+            ghost.style.height = `${size}px`;
+            return ghost;
+        }
+
+        function onDragMove(event) {
+            if (!drag || event.pointerId !== drag.pointerId) return;
+
+            if (!drag.moved) {
+                const distance = Math.hypot(
+                    event.clientX - drag.startX,
+                    event.clientY - drag.startY,
+                );
+                if (distance < 4) return; // 轻微抖动不算拖拽，仍然是一次点击
+                drag.moved = true;
+                drag.ghost = createGhost();
+                document.body.appendChild(drag.ghost);
+                document.body.classList.add("secret-dragging");
+            }
+
+            drag.ghost.style.left = `${event.clientX}px`;
+            drag.ghost.style.top = `${event.clientY}px`;
+        }
+
+        function onDragEnd(event) {
+            if (!drag || (event && event.pointerId !== drag.pointerId)) return;
+
+            window.removeEventListener("pointermove", onDragMove);
+            window.removeEventListener("pointerup", onDragEnd);
+            window.removeEventListener("pointercancel", onDragEnd);
+
+            if (secretEntry.hasPointerCapture?.(drag.pointerId)) {
+                secretEntry.releasePointerCapture(drag.pointerId);
+            }
+            drag.ghost?.remove();
+
+            if (drag.moved) {
+                // 拖完松手不能顺带触发跳转
+                secretEntryDragged = true;
+                window.setTimeout(() => {
+                    secretEntryDragged = false;
+                }, 0);
+            }
+
+            drag = null;
+            document.body.classList.remove("secret-dragging");
+        }
+
+        secretEntry.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0 || event.pointerType === "touch") return;
+            if (drag) onDragEnd(null);
+
+            drag = {
+                pointerId: event.pointerId,
+                startX: event.clientX,
+                startY: event.clientY,
+                moved: false,
+                ghost: null,
+            };
+            secretEntry.setPointerCapture?.(event.pointerId);
+            window.addEventListener("pointermove", onDragMove);
+            window.addEventListener("pointerup", onDragEnd);
+            window.addEventListener("pointercancel", onDragEnd);
+        });
+
+        secretEntry.addEventListener("click", (event) => {
+            if (!secretEntryDragged) return;
+            event.preventDefault();
+            event.stopImmediatePropagation();
+        });
     }
 
     // 3. 3D 夜空背景场景
