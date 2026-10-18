@@ -40,5 +40,11 @@ export const SITE_CONFIG = {
     scene: {
         moonTexture: "./assets/images/moon.png",
         enableGyroscope: true, // 是否在移动端启用陀螺仪重力感应
+
+        // 星空自转：模拟真实星空的东升西落
+        // 每分钟转过的角度 (真实星空是 0.25°/分钟，这里默认 12° 属于慢速时移)
+        starRotationDegPerMinute: 12,
+        // 转轴与竖直方向的夹角 (度)，设成当地纬度即可让北极星停在正上方附近
+        starRotationTilt: 35,
     },
 };

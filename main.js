@@ -198,6 +198,7 @@ import { SITE_CONFIG } from "./config.js";
         camera.position.set(0, 0, 0);
 
         const skyGroup = new THREE.Group();
+        const celestialGroup = new THREE.Group();
         const starGroup = new THREE.Group();
         const moonNearStarGroup = new THREE.Group();
         const nearStarGroup = new THREE.Group();
@@ -206,8 +207,9 @@ import { SITE_CONFIG } from "./config.js";
         const moonGroup = new THREE.Group();
 
         scene.add(skyGroup);
-        scene.add(starGroup);
+        scene.add(celestialGroup);
         scene.add(moonGroup);
+        celestialGroup.add(starGroup);
         starGroup.add(moonNearStarGroup);
         starGroup.add(nearStarGroup);
         starGroup.add(midStarGroup);
@@ -219,6 +221,22 @@ import { SITE_CONFIG } from "./config.js";
         const autoDriftSeed = Math.random() * Math.PI * 2;
         const gyroVelocity = { yaw: 0, pitch: 0 };
         const motion = createMotionController(gyroVelocity);
+
+        // 天球自转：整片星空绕北天极作刚体旋转，星点沿弧线东升西落
+        // 转轴抬高角 = 当地纬度，所以北极星稳居上方，越远的天区线速度越大
+        const driftDegPerMinute = SITE_CONFIG.scene?.starRotationDegPerMinute ?? 12;
+        const driftTiltDeg = SITE_CONFIG.scene?.starRotationTilt ?? 35;
+        const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+        // 12°/分钟 ≈ 真实星空（15°/小时）的 48 倍时移：肉眼可见，但一整天也转不完一圈
+        const driftSpeed = reduceMotion ? 0 : ((driftDegPerMinute * Math.PI) / 180) / 60;
+        const driftTilt = (driftTiltDeg * Math.PI) / 180;
+        const driftAxis = new THREE.Vector3(
+            0,
+            Math.sin(driftTilt),
+            -Math.cos(driftTilt),
+        ).normalize();
+        let driftAngle = 0;
+        let lastTimestamp = 0;
 
         const sky = createSkyDome();
         skyGroup.add(sky);
@@ -269,6 +287,15 @@ import { SITE_CONFIG } from "./config.js";
             if (disposed) return;
 
             const time = now * 0.001;
+
+            // 按真实时间推进天球角度（切回标签页时限制单帧步长，避免星空瞬移）
+            const delta = lastTimestamp ? Math.min((now - lastTimestamp) / 1000, 0.1) : 0;
+            lastTimestamp = now;
+            if (driftSpeed) {
+                driftAngle += driftSpeed * delta;
+                celestialGroup.quaternion.setFromAxisAngle(driftAxis, driftAngle);
+            }
+
             const isMobileLike = !matchMedia("(pointer:fine)").matches;
             if (isMobileLike) {
                 const autoYaw = Math.sin(time * 0.2 + autoDriftSeed) * 0.048
