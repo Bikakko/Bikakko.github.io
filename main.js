@@ -378,6 +378,7 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
 
         const moonTexturePath = SITE_CONFIG.scene?.moonTexture || "./assets/images/moon.png";
         const moon = createMoon(moonTexturePath);
+        moonGroup.add(moon.halo);
         moonGroup.add(moon.aura);
         moonGroup.add(moon.glow);
         moonGroup.add(moon.occluder);
@@ -497,21 +498,22 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
 
             const skyYaw = 0.34;
             const skyPitch = 0.42;
-            // 视差强度按距离递增：最近层最弱，最远层最强
-            const moonNearYaw = 0.32;
-            const moonNearPitch = 0.32;
-            const nearYaw = 0.5;
-            const nearPitch = 0.5;
-            const midYaw = 0.78;
-            const midPitch = 0.78;
-            const farYaw = 1.06;
-            const farPitch = 1.06;
-            const deepYaw = 1.32;
-            const deepPitch = 1.32;
-            const backdropYaw = 1.45;
-            const backdropPitch = 1.45;
-            const moonYaw = 0.58;
-            const moonPitch = 0.68;
+            // 从最近星层到星河按等差递增：每层视差 +0.2，避免近层贴在屏幕上
+            const parallaxStep = 0.2;
+            const moonNearYaw = 0.9;
+            const moonNearPitch = 0.9;
+            const nearYaw = moonNearYaw + parallaxStep;
+            const nearPitch = moonNearPitch + parallaxStep;
+            const midYaw = nearYaw + parallaxStep;
+            const midPitch = nearPitch + parallaxStep;
+            const farYaw = midYaw + parallaxStep;
+            const farPitch = midPitch + parallaxStep;
+            const deepYaw = farYaw + parallaxStep;
+            const deepPitch = farPitch + parallaxStep;
+            const backdropYaw = deepYaw + parallaxStep;
+            const backdropPitch = deepPitch + parallaxStep;
+            const moonYaw = 0.95;
+            const moonPitch = 0.95;
 
             skyGroup.rotation.y = current.yaw * skyYaw;
             skyGroup.rotation.x = current.pitch * skyPitch;
@@ -544,6 +546,7 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
 
             // 极慢的呼吸光晕，让月亮与空间保持生命感而不产生高频闪烁
             moon.glow.material.opacity = isStatic ? 0.28 : 0.27 + Math.sin(time * 0.11) * 0.016;
+            moon.halo.material.opacity = isStatic ? 0.14 : 0.135 + Math.sin(time * 0.06 + 1.9) * 0.012;
             moon.aura.material.opacity = isStatic ? 0.05 : 0.045 + Math.sin(time * 0.075 + 1.4) * 0.008;
 
             updateSecretEntryPosition(renderWidth, renderHeight);
@@ -641,6 +644,8 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
             moon.sprite.material.dispose();
             moon.glow.material.map?.dispose();
             moon.glow.material.dispose();
+            moon.halo.material.map?.dispose();
+            moon.halo.material.dispose();
             moon.aura.material.dispose();
 
             sky.geometry.dispose();
@@ -1949,6 +1954,23 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
         glowSprite.scale.set(132, 132, 1);
         glowSprite.renderOrder = 29;
 
+        const haloTexture = buildMoonHaloTexture();
+        const haloMaterial = new THREE.SpriteMaterial({
+            map: haloTexture,
+            transparent: true,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
+            opacity: 0.15,
+            color: 0xbcd4ef,
+            toneMapped: false,
+        });
+        injectFisheyeShader(haloMaterial, "sprite", 1, moonFisheyeUniforms);
+        const haloSprite = new THREE.Sprite(haloMaterial);
+        haloSprite.position.copy(moonSprite.position);
+        haloSprite.scale.set(276, 276, 1);
+        haloSprite.renderOrder = 27;
+
         const auraMaterial = new THREE.SpriteMaterial({
             map: glowTexture,
             transparent: true,
@@ -1969,6 +1991,7 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
             occluder: occluderSprite,
             sprite: moonSprite,
             glow: glowSprite,
+            halo: haloSprite,
             aura: auraSprite,
         };
     }
@@ -1980,6 +2003,7 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
         const moonY = THREE.MathUtils.lerp(116, 86, narrowness);
         const moonScale = THREE.MathUtils.lerp(58, 46, narrowness);
         const glowScale = THREE.MathUtils.lerp(132, 106, narrowness);
+        const haloScale = THREE.MathUtils.lerp(276, 224, narrowness);
         const auraScale = THREE.MathUtils.lerp(215, 172, narrowness);
         const occluderScale = moonScale * 1.08;
 
@@ -1987,9 +2011,11 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
         moon.occluder.scale.set(occluderScale, occluderScale, 1);
         moon.sprite.position.set(moonX, moonY, -312);
         moon.glow.position.copy(moon.sprite.position);
+        moon.halo.position.copy(moon.sprite.position);
         moon.aura.position.copy(moon.sprite.position);
         moon.sprite.scale.set(moonScale, moonScale, 1);
         moon.glow.scale.set(glowScale, glowScale, 1);
+        moon.halo.scale.set(haloScale, haloScale, 1);
         moon.aura.scale.set(auraScale, auraScale, 1);
     }
 
@@ -2073,6 +2099,28 @@ function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
         const headroom = THREE.MathUtils.lerp(1, 0.18, ratio * ratio);
         const next = current + delta * headroom;
         return THREE.MathUtils.clamp(next, -limit, limit);
+    }
+
+    function buildMoonHaloTexture() {
+        const canvas = document.createElement("canvas");
+        canvas.width = 256;
+        canvas.height = 256;
+        const context = canvas.getContext("2d");
+        const gradient = context.createRadialGradient(128, 128, 0, 128, 128, 128);
+        gradient.addColorStop(0, "rgba(212, 231, 252, 0.30)");
+        gradient.addColorStop(0.16, "rgba(208, 228, 250, 0.25)");
+        gradient.addColorStop(0.32, "rgba(198, 221, 247, 0.15)");
+        gradient.addColorStop(0.52, "rgba(184, 210, 242, 0.065)");
+        gradient.addColorStop(0.72, "rgba(172, 200, 236, 0.022)");
+        gradient.addColorStop(0.88, "rgba(164, 194, 232, 0.006)");
+        gradient.addColorStop(1, "rgba(160, 190, 230, 0)");
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, canvas.width, canvas.height);
+
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        return texture;
     }
 
     function buildGlowTexture() {
