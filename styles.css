@@ -7,7 +7,7 @@
 html,
 body {
     min-height: 100%;
-    background: #020712;
+    background: #01040c;
     color: #edf3ff;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
     -webkit-font-smoothing: antialiased;
@@ -34,6 +34,18 @@ body {
     width: 100%;
     height: 100%;
     pointer-events: none;
+}
+
+/* 极轻的暗角与上下空气感，让星空更聚焦且不抢卡片内容 */
+.home-scene::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background:
+        radial-gradient(130% 105% at 52% 42%, transparent 44%, rgba(0, 3, 10, 0.18) 78%, rgba(0, 2, 7, 0.38) 100%),
+        linear-gradient(180deg, rgba(0, 2, 7, 0.10) 0%, transparent 22%, transparent 74%, rgba(0, 2, 7, 0.22) 100%);
 }
 
 /* Secret Entry Hidden on the Moon */
@@ -131,7 +143,7 @@ body.secret-dragging * {
     justify-content: start;
 }
 
-/* Soft Light Glassmorphism Card Link (纯粉蓝柔光玻璃) */
+/* 夜空墨色边框：与星空同色，向内外如墨晕开 */
 .card-item {
     position: relative;
     display: block;
@@ -139,113 +151,124 @@ body.secret-dragging * {
     aspect-ratio: 6 / 4;
     cursor: pointer;
     text-decoration: none;
-    border: 1px solid rgba(255, 255, 255, 0.28);
     border-radius: 36px;
-    background: linear-gradient(
-        135deg,
-        rgba(186, 230, 253, 0.14) 0%,
-        rgba(255, 255, 255, 0.07) 45%,
-        rgba(56, 189, 248, 0.12) 100%
-    );
-    box-shadow:
-        0 12px 28px rgba(2, 6, 23, 0.35),
-        0 0 14px rgba(56, 189, 248, 0.1),
-        inset 0 1px 1.5px rgba(255, 255, 255, 0.6),
-        inset 0 0 8px rgba(186, 230, 253, 0.08);
-    backdrop-filter: blur(20px) saturate(140%);
-    -webkit-backdrop-filter: blur(20px) saturate(140%);
-    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-                box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
-                border-color 0.3s ease,
-                background 0.3s ease;
+    isolation: isolate;
+    transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* 鼠标悬停：温润明亮的粉蓝柔光泛起与微升 */
-.card-item:hover,
-.card-item:focus-visible {
-    transform: translateY(-5px) scale(1.02);
-    border-color: rgba(224, 242, 254, 0.65);
-    background: linear-gradient(
-        135deg,
-        rgba(186, 230, 253, 0.24) 0%,
-        rgba(255, 255, 255, 0.14) 45%,
-        rgba(56, 189, 248, 0.22) 100%
-    );
-    box-shadow:
-        0 20px 42px rgba(2, 6, 23, 0.48),
-        0 0 28px rgba(56, 189, 248, 0.36),
-        0 0 14px rgba(186, 230, 253, 0.45),
-        inset 0 1px 1.5px rgba(255, 255, 255, 0.85),
-        inset 0 0 12px rgba(186, 230, 253, 0.16);
-}
-
-.card-item:focus-visible {
-    outline: 2px solid rgba(56, 189, 248, 0.8);
-    outline-offset: 4px;
-}
-
-/* 背部微弱粉蓝环境光晕 (微扩范围) */
+/* 边框本体：夜空色，边界被晕染开 */
 .card-item::before {
     content: "";
     position: absolute;
-    inset: -8px;
-    z-index: -1;
-    border-radius: 46px;
-    background: radial-gradient(circle at 50% 50%, rgba(56, 189, 248, 0.18), transparent 65%);
-    filter: blur(14px);
-    opacity: 0.55;
-    transition: opacity 0.3s ease, filter 0.3s ease, transform 0.3s ease;
+    inset: 0;
+    z-index: 0;
+    border-radius: inherit;
+    background: linear-gradient(180deg, #04101c 0%, #071522 52%, #0a1a2b 100%);
+    filter: blur(6px);
+    -webkit-mask-image:
+        linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.35) 2%, rgba(0, 0, 0, 0.8) 5%, #000 9%, #000 91%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 0.35) 98%, transparent 100%),
+        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.35) 2%, rgba(0, 0, 0, 0.8) 5%, #000 9%, #000 91%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 0.35) 98%, transparent 100%);
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-composite: source-in;
+    mask-image:
+        linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.35) 2%, rgba(0, 0, 0, 0.8) 5%, #000 9%, #000 91%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 0.35) 98%, transparent 100%),
+        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.35) 2%, rgba(0, 0, 0, 0.8) 5%, #000 9%, #000 91%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 0.35) 98%, transparent 100%);
+    mask-repeat: no-repeat;
+    mask-composite: intersect;
     pointer-events: none;
 }
 
-.card-item:hover::before,
-.card-item:focus-visible::before {
-    opacity: 0.9;
-    filter: blur(20px);
-    transform: scale(1.07);
+/* 更外一层的墨晕，向星空慢慢化开 */
+.card-item::after {
+    content: "";
+    position: absolute;
+    inset: -13px;
+    z-index: -1;
+    border-radius: 50px;
     background: radial-gradient(
-        circle at 50% 50%,
-        rgba(56, 189, 248, 0.42),
-        rgba(186, 230, 253, 0.2) 48%,
-        transparent 72%
+        ellipse at 50% 52%,
+        rgba(7, 18, 31, 0.62) 0%,
+        rgba(7, 18, 31, 0.30) 55%,
+        transparent 78%
     );
+    filter: blur(18px);
+    opacity: 0.78;
+    pointer-events: none;
+    transition: opacity 0.45s ease, transform 0.45s ease;
+}
+
+/* 悬停：墨晕稍稍退开，画面更浮现一点 */
+.card-item:hover,
+.card-item:focus-visible {
+    transform: translateY(-4px) scale(1.015);
+}
+
+.card-item:hover::after,
+.card-item:focus-visible::after {
+    opacity: 0.68;
+    transform: scale(1.02);
+}
+
+.card-item:focus-visible {
+    outline: 1px solid rgba(150, 195, 232, 0.45);
+    outline-offset: 10px;
 }
 
 .card-media {
     position: relative;
+    z-index: 1;
     width: 100%;
     height: 100%;
     border-radius: 28px;
     overflow: hidden;
-    border: 1px solid rgba(255, 255, 255, 0.16);
-    box-shadow: inset 0 1px 1px rgba(255, 255, 255, 0.25);
+    /* 边缘羽化：画面从实到虚，慢慢没入墨色夜空 */
+    -webkit-mask-image:
+        linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.22) 2.5%, rgba(0, 0, 0, 0.62) 6.5%, rgba(0, 0, 0, 0.9) 10%, #000 14%, #000 86%, rgba(0, 0, 0, 0.9) 90%, rgba(0, 0, 0, 0.62) 93.5%, rgba(0, 0, 0, 0.22) 97.5%, transparent 100%),
+        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.22) 3%, rgba(0, 0, 0, 0.62) 8%, rgba(0, 0, 0, 0.9) 12%, #000 17%, #000 83%, rgba(0, 0, 0, 0.9) 88%, rgba(0, 0, 0, 0.62) 92%, rgba(0, 0, 0, 0.22) 97%, transparent 100%);
+    -webkit-mask-repeat: no-repeat;
+    -webkit-mask-composite: source-in;
+    mask-image:
+        linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.22) 2.5%, rgba(0, 0, 0, 0.62) 6.5%, rgba(0, 0, 0, 0.9) 10%, #000 14%, #000 86%, rgba(0, 0, 0, 0.9) 90%, rgba(0, 0, 0, 0.62) 93.5%, rgba(0, 0, 0, 0.22) 97.5%, transparent 100%),
+        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.22) 3%, rgba(0, 0, 0, 0.62) 8%, rgba(0, 0, 0, 0.9) 12%, #000 17%, #000 83%, rgba(0, 0, 0, 0.9) 88%, rgba(0, 0, 0, 0.62) 92%, rgba(0, 0, 0, 0.22) 97%, transparent 100%);
+    mask-repeat: no-repeat;
+    mask-composite: intersect;
 }
 
-/* 覆盖在图片上层的清透粉蓝柔光玻璃薄膜 */
-.card-media::after {
+/* 墨色向内蕴散，图片边缘融进夜空 */
+.card-media::before {
     content: "";
     position: absolute;
     inset: 0;
-    pointer-events: none;
+    z-index: 2;
     border-radius: inherit;
-    background: linear-gradient(
-        135deg,
-        rgba(255, 255, 255, 0.18) 0%,
-        rgba(186, 230, 253, 0.04) 35%,
-        transparent 55%,
-        rgba(56, 189, 248, 0.08) 100%
+    background: radial-gradient(
+        ellipse 84% 88% at 49% 47%,
+        transparent 52%,
+        rgba(5, 15, 27, 0.16) 68%,
+        rgba(5, 15, 27, 0.46) 84%,
+        rgba(5, 15, 27, 0.82) 100%
     );
-    transition: opacity 0.3s ease, background 0.3s ease;
+    box-shadow:
+        inset 0 0 18px rgba(5, 15, 27, 0.85),
+        inset 0 0 42px rgba(5, 15, 27, 0.45),
+        inset 6px -6px 48px rgba(5, 15, 27, 0.18);
+    pointer-events: none;
+    transition: background 0.45s ease, box-shadow 0.45s ease;
 }
 
-.card-item:hover .card-media::after {
-    background: linear-gradient(
-        135deg,
-        rgba(255, 255, 255, 0.3) 0%,
-        rgba(186, 230, 253, 0.1) 35%,
-        transparent 55%,
-        rgba(56, 189, 248, 0.15) 100%
+.card-item:hover .card-media::before,
+.card-item:focus-visible .card-media::before {
+    background: radial-gradient(
+        ellipse 84% 88% at 49% 47%,
+        transparent 54%,
+        rgba(5, 15, 27, 0.12) 70%,
+        rgba(5, 15, 27, 0.38) 86%,
+        rgba(5, 15, 27, 0.74) 100%
     );
+    box-shadow:
+        inset 0 0 16px rgba(5, 15, 27, 0.78),
+        inset 0 0 38px rgba(5, 15, 27, 0.36),
+        inset 6px -6px 44px rgba(5, 15, 27, 0.14);
 }
 
 .card-cover {
@@ -254,10 +277,11 @@ body.secret-dragging * {
     display: block;
     object-fit: cover;
     border-radius: 28px;
-    transition: transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);
+    transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-.card-item:hover .card-cover {
+.card-item:hover .card-cover,
+.card-item:focus-visible .card-cover {
     transform: scale(1.03);
 }
 /* Empty state */
@@ -309,8 +333,14 @@ body.secret-dragging * {
         padding: 8px;
     }
 
+    .card-item::after {
+        inset: -7px;
+        border-radius: 38px;
+    }
+
     .card-media,
     .card-cover {
         border-radius: 22px;
     }
+
 }

@@ -1,6 +1,16 @@
 import * as THREE from "./assets/vendor/three.module.min.js";
 import { SITE_CONFIG } from "./config.js";
 
+// 以冷白和星光白为主，少量琥珀与淡紫，避免星空变成彩色噪点
+const STAR_TINTS = [
+    [0.72, 0.84, 1.0],
+    [0.9, 0.95, 1.0],
+    [1.0, 0.98, 0.94],
+    [1.0, 0.97, 0.92],
+    [1.0, 0.86, 0.7],
+    [0.86, 0.82, 1.0],
+];
+
 (function () {
     const sceneHost = document.getElementById("home-scene");
     const cardsGrid = document.getElementById("cards-grid");
@@ -183,18 +193,25 @@ import { SITE_CONFIG } from "./config.js";
     }
 
     function createNightSky(host) {
+        const isMobile = matchMedia("(max-width: 768px)").matches;
+        const isMobileLike = !matchMedia("(pointer: fine)").matches;
+        const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
         const scene = new THREE.Scene();
 
+        // 这片星空是慢速氛围场景：关闭 MSAA、限制像素预算并以 30fps 渲染，
+        // 对 2024 年前后的核显/轻薄本更友好，肉眼几乎看不出差别。
         const renderer = new THREE.WebGLRenderer({
-            antialias: true,
+            antialias: false,
             alpha: true,
             powerPreference: "high-performance",
+            stencil: false,
         });
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.setClearColor(0x000000, 0);
         host.appendChild(renderer.domElement);
 
-        const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 1200);
+        const camera = new THREE.PerspectiveCamera(56, 1, 0.1, 1400);
         camera.position.set(0, 0, 0);
 
         const skyGroup = new THREE.Group();
@@ -220,14 +237,12 @@ import { SITE_CONFIG } from "./config.js";
         const autoState = { yaw: 0, pitch: 0 };
         const autoDriftSeed = Math.random() * Math.PI * 2;
         const gyroVelocity = { yaw: 0, pitch: 0 };
-        const motion = createMotionController(gyroVelocity);
+        const motion = reduceMotion ? { cleanup() {} } : createMotionController(gyroVelocity);
 
         // 天球自转：整片星空绕北天极作刚体旋转，星点沿弧线东升西落
         // 转轴抬高角 = 当地纬度，所以北极星稳居上方，越远的天区线速度越大
         const driftDegPerMinute = SITE_CONFIG.scene?.starRotationDegPerMinute ?? 12;
         const driftTiltDeg = SITE_CONFIG.scene?.starRotationTilt ?? 35;
-        const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
-        // 12°/分钟 ≈ 真实星空（15°/小时）的 48 倍时移：肉眼可见，但一整天也转不完一圈
         const driftSpeed = reduceMotion ? 0 : ((driftDegPerMinute * Math.PI) / 180) / 60;
         const driftTilt = (driftTiltDeg * Math.PI) / 180;
         const driftAxis = new THREE.Vector3(
@@ -236,44 +251,90 @@ import { SITE_CONFIG } from "./config.js";
             -Math.cos(driftTilt),
         ).normalize();
         let driftAngle = 0;
-        let lastTimestamp = 0;
 
         const sky = createSkyDome();
         skyGroup.add(sky);
 
-        const stars = createStarField();
+        const stars = createStarField(isMobile);
+        const starLayers = Object.values(stars);
         moonNearStarGroup.add(stars.moonNear.points);
         nearStarGroup.add(stars.near.points);
         midStarGroup.add(stars.mid.points);
         farStarGroup.add(stars.far.points);
+        farStarGroup.add(stars.deep.points);
+
+        // 极淡的银河尘带只负责提供深空结构，不做整屏雾化
+        const galaxy = createGalaxyBand();
+        farStarGroup.add(galaxy.mesh);
+
+        // 星之河用真正的点精灵绘制，保持颗粒清晰，而不是贴一层雾状纹理
+        const starRiver = createStarRiver(isMobile);
+        farStarGroup.add(starRiver.points);
+        starLayers.push(starRiver);
+
+        const anchorStarGroup = new THREE.Group();
+        starGroup.add(anchorStarGroup);
+        const anchorStars = createAnchorStars(isMobile);
+        anchorStarGroup.add(anchorStars.group);
 
         const moonTexturePath = SITE_CONFIG.scene?.moonTexture || "./assets/images/moon.png";
         const moon = createMoon(moonTexturePath);
-        moonGroup.add(moon.occluder);
+        moonGroup.add(moon.aura);
         moonGroup.add(moon.glow);
+        moonGroup.add(moon.occluder);
         moonGroup.add(moon.sprite);
-        const moonScreenPosition = new THREE.Vector3();
 
+        const meteor = createMeteorField();
+        scene.add(meteor.group);
+
+        const moonScreenPosition = new THREE.Vector3();
+        const targetFrameMs = 1000 / 30;
         let rafId = 0;
         let disposed = false;
+        let lastPaintAt = 0;
+        let renderWidth = 1;
+        let renderHeight = 1;
+        let lastSecretX = Number.NaN;
+        let lastSecretY = Number.NaN;
+        let lastSecretSize = 0;
+
+        function computePixelRatio(width, height) {
+            const budget = Math.sqrt(
+                (isMobile ? 2_200_000 : 3_300_000) / Math.max(width * height, 1)
+            );
+            return Math.max(
+                0.8,
+                Math.min(window.devicePixelRatio || 1, isMobile ? 1.5 : 1.6, budget)
+            );
+        }
 
         function resize() {
-            const width = host.clientWidth || window.innerWidth;
-            const height = host.clientHeight || window.innerHeight;
-            camera.aspect = width / Math.max(height, 1);
+            renderWidth = host.clientWidth || window.innerWidth || 1;
+            renderHeight = host.clientHeight || window.innerHeight || 1;
+            const pixelRatio = computePixelRatio(renderWidth, renderHeight);
+
+            camera.aspect = renderWidth / Math.max(renderHeight, 1);
             camera.updateProjectionMatrix();
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 1.75));
-            renderer.setSize(width, height, false);
-            sky.material.uniforms.uResolution.value.set(width, height);
-            positionMoon(moon, width, height);
-            updateSecretEntryPosition(width, height);
+            renderer.setPixelRatio(pixelRatio);
+            renderer.setSize(renderWidth, renderHeight, false);
+
+            for (const layer of starLayers) {
+                layer.material.uniforms.uPixelRatio.value = pixelRatio;
+            }
+            anchorStars.layout(camera.aspect);
+
+            positionMoon(moon, renderWidth, renderHeight);
+            updateSecretEntryPosition(renderWidth, renderHeight);
+
+            if (reduceMotion) {
+                updateAndDraw(performance.now(), 0, true);
+            }
         }
 
         function onPointerMove(event) {
-            const width = window.innerWidth || 1;
-            const height = window.innerHeight || 1;
-            const pointerX = (event.clientX / width) * 2 - 1;
-            const pointerY = (event.clientY / height) * 2 - 1;
+            if (reduceMotion) return;
+            const pointerX = (event.clientX / Math.max(window.innerWidth, 1)) * 2 - 1;
+            const pointerY = (event.clientY / Math.max(window.innerHeight, 1)) * 2 - 1;
             target.yaw = pointerX * 0.075;
             target.pitch = pointerY * 0.068;
         }
@@ -285,41 +346,52 @@ import { SITE_CONFIG } from "./config.js";
 
         function animate(now) {
             if (disposed) return;
+            if (document.hidden) {
+                rafId = 0;
+                return;
+            }
 
-            const time = now * 0.001;
+            rafId = window.requestAnimationFrame(animate);
 
-            // 按真实时间推进天球角度（切回标签页时限制单帧步长，避免星空瞬移）
-            const delta = lastTimestamp ? Math.min((now - lastTimestamp) / 1000, 0.1) : 0;
-            lastTimestamp = now;
-            if (driftSpeed) {
+            const elapsed = lastPaintAt ? now - lastPaintAt : Number.POSITIVE_INFINITY;
+            if (elapsed < targetFrameMs - 1) return;
+
+            // 切后台或掉帧后限制步长，避免星空/视差瞬移
+            const delta = lastPaintAt ? Math.min(elapsed / 1000, 0.1) : 0;
+            lastPaintAt = now;
+            updateAndDraw(now, delta, false);
+        }
+
+        function updateAndDraw(now, delta, isStatic) {
+            const time = isStatic ? 0 : now * 0.001;
+
+            if (!isStatic && driftSpeed) {
                 driftAngle += driftSpeed * delta;
                 celestialGroup.quaternion.setFromAxisAngle(driftAxis, driftAngle);
             }
 
-            const isMobileLike = !matchMedia("(pointer:fine)").matches;
-            if (isMobileLike) {
+            if (!isStatic && isMobileLike) {
                 const autoYaw = Math.sin(time * 0.2 + autoDriftSeed) * 0.048
                     + Math.sin(time * 0.21 + autoDriftSeed * 0.7) * 0.032;
                 const autoPitch = Math.cos(time * 0.15 + autoDriftSeed) * 0.042
                     + Math.cos(time * 0.16 + autoDriftSeed * 0.5) * 0.025;
 
-                autoState.yaw += (autoYaw - autoState.yaw) * 0.026;
-                autoState.pitch += (autoPitch - autoState.pitch) * 0.03;
+                autoState.yaw += (autoYaw - autoState.yaw) * (1 - Math.exp(-delta * 1.7));
+                autoState.pitch += (autoPitch - autoState.pitch) * (1 - Math.exp(-delta * 1.9));
 
-                gyroVelocity.yaw *= 0.94;
-                gyroVelocity.pitch *= 0.935;
+                const gyroDecay = Math.exp(-delta * 3.8);
+                gyroVelocity.yaw *= gyroDecay;
+                gyroVelocity.pitch *= gyroDecay;
 
                 target.yaw = autoState.yaw + gyroVelocity.yaw;
                 target.pitch = autoState.pitch + gyroVelocity.pitch;
             }
 
-            const desiredYaw = target.yaw;
-            const desiredPitch = target.pitch;
-
-            const yawEase = isMobileLike ? 0.08 : 0.06;
-            const pitchEase = isMobileLike ? 0.085 : 0.065;
-            current.yaw += (desiredYaw - current.yaw) * yawEase;
-            current.pitch += (desiredPitch - current.pitch) * pitchEase;
+            if (!isStatic) {
+                const follow = 1 - Math.exp(-delta * (isMobileLike ? 6.4 : 4.8));
+                current.yaw += (target.yaw - current.yaw) * follow;
+                current.pitch += (target.pitch - current.pitch) * follow;
+            }
 
             const skyYaw = 0.34;
             const skyPitch = 0.42;
@@ -346,75 +418,117 @@ import { SITE_CONFIG } from "./config.js";
             farStarGroup.rotation.x = current.pitch * farPitch;
             moonGroup.rotation.y = current.yaw * moonYaw;
             moonGroup.rotation.x = current.pitch * moonPitch;
+            anchorStarGroup.rotation.y = current.yaw * 1.06;
+            anchorStarGroup.rotation.x = current.pitch * 1.18;
 
-            stars.moonNear.material.uniforms.uTime.value = time;
-            stars.near.material.uniforms.uTime.value = time;
-            stars.mid.material.uniforms.uTime.value = time;
-            stars.far.material.uniforms.uTime.value = time;
-            updateSecretEntryPosition(window.innerWidth || 1, window.innerHeight || 1);
+            for (const layer of starLayers) {
+                layer.material.uniforms.uTime.value = time;
+            }
+            anchorStars.update(time);
 
+            if (!isStatic) {
+                meteor.update(now);
+            }
+
+            // 极慢的呼吸光晕，让月亮与空间保持生命感而不产生高频闪烁
+            moon.glow.material.opacity = isStatic ? 0.28 : 0.27 + Math.sin(time * 0.11) * 0.016;
+            moon.aura.material.opacity = isStatic ? 0.05 : 0.045 + Math.sin(time * 0.075 + 1.4) * 0.008;
+
+            updateSecretEntryPosition(renderWidth, renderHeight);
             renderer.render(scene, camera);
-            rafId = window.requestAnimationFrame(animate);
         }
 
         function updateSecretEntryPosition(width, height) {
-            if (!secretEntry) {
-                return;
-            }
+            if (!secretEntry) return;
+
             moon.sprite.getWorldPosition(moonScreenPosition);
             moonScreenPosition.project(camera);
             const x = (moonScreenPosition.x * 0.5 + 0.5) * width;
             const y = (-moonScreenPosition.y * 0.5 + 0.5) * height;
-            const isMobileLike = !matchMedia("(pointer:fine)").matches;
             const size = isMobileLike ? 58 : 70;
-            secretEntry.style.left = `${x}px`;
-            secretEntry.style.top = `${y}px`;
+
+            if (
+                Math.abs(x - lastSecretX) < 0.25
+                && Math.abs(y - lastSecretY) < 0.25
+                && size === lastSecretSize
+            ) {
+                return;
+            }
+
+            lastSecretX = x;
+            lastSecretY = y;
+            lastSecretSize = size;
+            secretEntry.style.left = `${x.toFixed(2)}px`;
+            secretEntry.style.top = `${y.toFixed(2)}px`;
             secretEntry.style.width = `${size}px`;
             secretEntry.style.height = `${size}px`;
         }
 
+        function onVisibilityChange() {
+            if (reduceMotion || disposed) return;
+            if (document.hidden) {
+                if (rafId) window.cancelAnimationFrame(rafId);
+                rafId = 0;
+            } else if (!rafId) {
+                lastPaintAt = 0;
+                rafId = window.requestAnimationFrame(animate);
+            }
+        }
+
         resize();
         window.addEventListener("resize", resize);
-        window.addEventListener("pointermove", onPointerMove);
-        window.addEventListener("pointerleave", onPointerLeave);
-        rafId = window.requestAnimationFrame(animate);
+        document.addEventListener("visibilitychange", onVisibilityChange);
+
+        if (!reduceMotion) {
+            window.addEventListener("pointermove", onPointerMove);
+            window.addEventListener("pointerleave", onPointerLeave);
+            rafId = window.requestAnimationFrame(animate);
+        }
 
         return function dispose() {
             disposed = true;
-            window.cancelAnimationFrame(rafId);
+            if (rafId) window.cancelAnimationFrame(rafId);
             window.removeEventListener("resize", resize);
             window.removeEventListener("pointermove", onPointerMove);
             window.removeEventListener("pointerleave", onPointerLeave);
+            document.removeEventListener("visibilitychange", onVisibilityChange);
             motion.cleanup();
-            renderer.dispose();
-            for (const layer of Object.values(stars)) {
+            meteor.dispose();
+
+            for (const layer of starLayers) {
                 layer.geometry.dispose();
                 layer.material.dispose();
             }
+            anchorStars.dispose();
+            galaxy.geometry.dispose();
+            galaxy.material.dispose();
+            galaxy.texture.dispose();
+
             moon.occluder.material.dispose();
             moon.sprite.material.map?.dispose();
             moon.sprite.material.dispose();
             moon.glow.material.map?.dispose();
             moon.glow.material.dispose();
+            moon.aura.material.dispose();
+
             sky.geometry.dispose();
             sky.material.dispose();
+            renderer.dispose();
+            renderer.forceContextLoss();
             host.replaceChildren();
         };
     }
 
     function createSkyDome() {
-        const geometry = new THREE.SphereGeometry(520, 64, 64);
+        const geometry = new THREE.SphereGeometry(520, 48, 32);
         const material = new THREE.ShaderMaterial({
             side: THREE.BackSide,
             depthWrite: false,
+            depthTest: false,
             uniforms: {
-                uZenithColor: { value: new THREE.Color(0x04101f) },
-                uUpperColor: { value: new THREE.Color(0x0b1f39) },
-                uLowerColor: { value: new THREE.Color(0x173963) },
-                uHorizonColor: { value: new THREE.Color(0xe8ddcd) },
-                uHazeColor: { value: new THREE.Color(0x9a93a3) },
-                uCityGlowColor: { value: new THREE.Color(0xe2bf9c) },
-                uResolution: { value: new THREE.Vector2(Math.max(window.innerWidth, 1), Math.max(window.innerHeight, 1)) },
+                uZenithColor: { value: new THREE.Color(0x000102) },
+                uUpperColor: { value: new THREE.Color(0x01040b) },
+                uLowerColor: { value: new THREE.Color(0x040f1b) },
             },
             vertexShader: `
                 varying vec3 vWorldPosition;
@@ -428,42 +542,38 @@ import { SITE_CONFIG } from "./config.js";
                 uniform vec3 uZenithColor;
                 uniform vec3 uUpperColor;
                 uniform vec3 uLowerColor;
-                uniform vec3 uHorizonColor;
-                uniform vec3 uHazeColor;
-                uniform vec3 uCityGlowColor;
-                uniform vec2 uResolution;
                 varying vec3 vWorldPosition;
 
+                float hash21(vec2 p) {
+                    p = fract(p * vec2(123.34, 456.21));
+                    p += dot(p, p + 45.32);
+                    return fract(p.x * p.y);
+                }
+
                 void main() {
-                    vec3 dir = normalize(vWorldPosition);
-                    vec2 screenUv = gl_FragCoord.xy / max(uResolution, vec2(1.0));
-                    float y = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
-                    vec3 sky = mix(uLowerColor, uUpperColor, smoothstep(0.06, 0.56, y));
-                    sky = mix(sky, uZenithColor, smoothstep(0.56, 1.0, y));
+                    float elevation = normalize(vWorldPosition).y;
+                    vec3 sky = mix(uLowerColor, uUpperColor, smoothstep(-0.1, 0.42, elevation));
+                    sky = mix(sky, uZenithColor, smoothstep(0.4, 0.98, elevation));
 
-                    float lowGlow = smoothstep(0.0, 0.2, y) * (1.0 - smoothstep(0.2, 0.36, y));
-                    float horizon = smoothstep(0.0, 0.075, y) * (1.0 - smoothstep(0.075, 0.2, y));
-                    float centeredX = abs(screenUv.x - 0.5) * 2.0;
-                    float edgeBias = 1.04 + 0.16 * smoothstep(0.0, 0.94, centeredX);
-                    float cityCore = exp(-screenUv.y * 10.4);
-                    float cityGlow = exp(-screenUv.y * 4.8);
-                    float cityMist = exp(-screenUv.y * 2.85);
-
-                    sky += uHazeColor * lowGlow * 0.44;
-                    sky += uHorizonColor * horizon * 0.065;
-                    sky += uCityGlowColor * cityCore * 0.136 * edgeBias;
-                    sky += uCityGlowColor * cityGlow * 0.066 * edgeBias;
-                    sky += uHazeColor * cityMist * 0.056 * edgeBias;
+                    // 轻抖动打散大面积渐变的色带
+                    float dither = (hash21(gl_FragCoord.xy) - 0.5) / 255.0;
+                    sky = max(sky + dither, vec3(0.0));
 
                     gl_FragColor = vec4(sky, 1.0);
+                    #include <colorspace_fragment>
                 }
             `,
         });
-        return new THREE.Mesh(geometry, material);
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.frustumCulled = false;
+        mesh.renderOrder = -100;
+        return mesh;
     }
 
-    function createStarField() {
-        const isMobile = matchMedia("(max-width: 768px)").matches;
+    function createStarField(isMobileViewport) {
+        const isMobile = typeof isMobileViewport === "boolean"
+            ? isMobileViewport
+            : matchMedia("(max-width: 768px)").matches;
         const layerConfigs = isMobile
             ? [
                 {
@@ -541,6 +651,25 @@ import { SITE_CONFIG } from "./config.js";
                     twinkleChance: 0.24,
                     twinkleMin: 0.24,
                     twinkleMax: 0.52,
+                },
+                {
+                    key: "deep",
+                    count: 820,
+                    radiusMin: 472,
+                    radiusMax: 532,
+                    scaleMin: 0.36,
+                    scaleMax: 0.72,
+                    alphaMin: 0.10,
+                    alphaMax: 0.22,
+                    depthMin: 0.55,
+                    depthMax: 0.82,
+                    yBias: 8,
+                    yScale: 0.6,
+                    brightChance: 0.0,
+                    midChance: 0.18,
+                    twinkleChance: 0.12,
+                    twinkleMin: 0.1,
+                    twinkleMax: 0.24,
                 },
             ]
             : [
@@ -620,6 +749,25 @@ import { SITE_CONFIG } from "./config.js";
                     twinkleMin: 0.22,
                     twinkleMax: 0.48,
                 },
+                {
+                    key: "deep",
+                    count: 1600,
+                    radiusMin: 474,
+                    radiusMax: 536,
+                    scaleMin: 0.36,
+                    scaleMax: 0.74,
+                    alphaMin: 0.10,
+                    alphaMax: 0.22,
+                    depthMin: 0.55,
+                    depthMax: 0.82,
+                    yBias: 8,
+                    yScale: 0.6,
+                    brightChance: 0.0,
+                    midChance: 0.16,
+                    twinkleChance: 0.12,
+                    twinkleMin: 0.1,
+                    twinkleMax: 0.24,
+                },
             ];
 
         const moonDirection = new THREE.Vector3(168, 120, -312).normalize();
@@ -634,11 +782,14 @@ import { SITE_CONFIG } from "./config.js";
 
     function buildStarLayer(config, moonDirection, moonMaskDot) {
         const positions = new Float32Array(config.count * 3);
+        const colors = new Float32Array(config.count * 3);
         const scales = new Float32Array(config.count);
         const alphas = new Float32Array(config.count);
         const phases = new Float32Array(config.count);
         const twinkles = new Float32Array(config.count);
         const depths = new Float32Array(config.count);
+        const sparkles = new Float32Array(config.count);
+        const sparkleChance = config.key === "moonNear" ? 0.12 : config.key === "near" ? 0.06 : 0;
 
         for (let i = 0; i < config.count; i += 1) {
             const radius = config.radiusMin + Math.random() * (config.radiusMax - config.radiusMin);
@@ -676,19 +827,31 @@ import { SITE_CONFIG } from "./config.js";
                 alphas[i] = config.alphaMin + Math.random() * (config.alphaMax - config.alphaMin) * 0.18;
             }
 
+            const tint = STAR_TINTS[(Math.random() * STAR_TINTS.length) | 0];
+            const tintGain = 0.94 + Math.random() * 0.06;
+            colors[i * 3] = tint[0] * tintGain;
+            colors[i * 3 + 1] = tint[1] * tintGain;
+            colors[i * 3 + 2] = tint[2] * tintGain;
+
             phases[i] = Math.random() * Math.PI * 2;
+            // 把闪烁降到 20~45 秒级，只留下几乎察觉不到的“呼吸”
             twinkles[i] = Math.random() > (1 - config.twinkleChance)
-                ? config.twinkleMin + Math.random() * (config.twinkleMax - config.twinkleMin)
+                ? (config.twinkleMin + Math.random() * (config.twinkleMax - config.twinkleMin)) * 0.45
+                : 0.0;
+            sparkles[i] = brightRoll > config.midChance && Math.random() < sparkleChance
+                ? 0.55 + Math.random() * 0.45
                 : 0.0;
         }
 
         const geometry = new THREE.BufferGeometry();
         geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute("aStarColor", new THREE.BufferAttribute(colors, 3));
         geometry.setAttribute("aScale", new THREE.BufferAttribute(scales, 1));
         geometry.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
         geometry.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
         geometry.setAttribute("aTwinkle", new THREE.BufferAttribute(twinkles, 1));
         geometry.setAttribute("aDepth", new THREE.BufferAttribute(depths, 1));
+        geometry.setAttribute("aSparkle", new THREE.BufferAttribute(sparkles, 1));
 
         const material = new THREE.ShaderMaterial({
             transparent: true,
@@ -697,7 +860,7 @@ import { SITE_CONFIG } from "./config.js";
             blending: THREE.AdditiveBlending,
             uniforms: {
                 uTime: { value: 0 },
-                uPixelRatio: { value: Math.min(window.devicePixelRatio || 1, 1.75) },
+                uPixelRatio: { value: 1 },
             },
             vertexShader: `
                 attribute float aScale;
@@ -705,16 +868,29 @@ import { SITE_CONFIG } from "./config.js";
                 attribute float aPhase;
                 attribute float aTwinkle;
                 attribute float aDepth;
+                attribute float aSparkle;
+                attribute vec3 aStarColor;
                 varying float vAlpha;
                 varying float vPhase;
                 varying float vTwinkle;
+                varying float vSparkle;
+                varying vec3 vColor;
                 uniform float uPixelRatio;
+
                 void main() {
                     vAlpha = aAlpha;
                     vPhase = aPhase;
                     vTwinkle = aTwinkle;
+                    vSparkle = aSparkle;
+                    vColor = aStarColor;
+
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-                    gl_PointSize = aScale * aDepth * uPixelRatio * (244.0 / -mvPosition.z);
+                    float starSize = aScale * aDepth * (1.0 + aSparkle * 0.9);
+                    gl_PointSize = clamp(
+                        starSize * uPixelRatio * (340.0 / max(1.0, -mvPosition.z)),
+                        0.9,
+                        44.0
+                    );
                     gl_Position = projectionMatrix * mvPosition;
                 }
             `,
@@ -723,14 +899,35 @@ import { SITE_CONFIG } from "./config.js";
                 varying float vAlpha;
                 varying float vPhase;
                 varying float vTwinkle;
+                varying float vSparkle;
+                varying vec3 vColor;
+
                 void main() {
                     vec2 centered = gl_PointCoord - vec2(0.5);
-                    float dist = length(centered);
-                    float body = smoothstep(0.52, 0.0, dist);
-                    float glow = smoothstep(0.82, 0.0, dist) * 0.66;
-                    float flicker = vTwinkle > 0.0 ? sin(uTime * vTwinkle + vPhase) * 0.22 : 0.0;
-                    float alpha = max(0.0, vAlpha + flicker) * (body + glow);
-                    gl_FragColor = vec4(vec3(0.94, 0.97, 1.0), alpha);
+                    float dist = length(centered) * 2.0;
+                    if (dist > 1.0) discard;
+
+                    float core = 1.0 - smoothstep(0.03, 0.34, dist);
+                    float halo = exp(-dist * dist * 7.4) * (0.24 + vSparkle * 0.12);
+
+                    float ray = 0.0;
+                    if (vSparkle > 0.0) {
+                        vec2 axis = abs(centered);
+                        float horizontal = exp(-axis.y * 30.0)
+                            * (1.0 - smoothstep(0.04, 0.5, axis.x));
+                        float vertical = exp(-axis.x * 30.0)
+                            * (1.0 - smoothstep(0.04, 0.5, axis.y));
+                        ray = (horizontal + vertical) * 0.24 * vSparkle;
+                    }
+
+                    float shimmer = vTwinkle > 0.0
+                        ? sin(uTime * vTwinkle + vPhase) * 0.06
+                        : 0.0;
+                    float alpha = (core + halo + ray) * vAlpha * (1.0 + shimmer);
+                    if (alpha < 0.006) discard;
+
+                    gl_FragColor = vec4(vColor, min(alpha, 1.0));
+                    #include <colorspace_fragment>
                 }
             `,
         });
@@ -738,6 +935,761 @@ import { SITE_CONFIG } from "./config.js";
         const points = new THREE.Points(geometry, material);
         points.renderOrder = 10;
         return { geometry, material, points };
+    }
+
+    function createAnchorStars(isMobileViewport) {
+        const definitions = isMobileViewport
+            ? [
+                { x: 0.18, y: 0.23, size: 21, color: 0xc4d8ff, opacity: 0.92 },
+                { x: 0.52, y: 0.12, size: 15, color: 0xffe1b6, opacity: 0.76 },
+                { x: 0.3, y: 0.43, size: 18, color: 0xeaf3ff, opacity: 0.8 },
+                { x: 0.64, y: 0.55, size: 13, color: 0xd7def8, opacity: 0.62 },
+            ]
+            : [
+                { x: 0.17, y: 0.24, size: 24, color: 0xc4d8ff, opacity: 0.92 },
+                { x: 0.39, y: 0.12, size: 17, color: 0xffe1b6, opacity: 0.76 },
+                { x: 0.28, y: 0.46, size: 20, color: 0xeaf3ff, opacity: 0.8 },
+                { x: 0.56, y: 0.31, size: 14, color: 0xc7d5ff, opacity: 0.62 },
+                { x: 0.85, y: 0.43, size: 22, color: 0xf7e6c9, opacity: 0.78 },
+                { x: 0.66, y: 0.65, size: 13, color: 0xdbe6ff, opacity: 0.58 },
+            ];
+
+        const texture = buildAnchorStarTexture();
+        const group = new THREE.Group();
+        const sprites = [];
+
+        for (let i = 0; i < definitions.length; i += 1) {
+            const definition = definitions[i];
+            const material = new THREE.SpriteMaterial({
+                map: texture,
+                transparent: true,
+                depthTest: false,
+                depthWrite: false,
+                blending: THREE.AdditiveBlending,
+                color: definition.color,
+                opacity: definition.opacity,
+                toneMapped: false,
+            });
+            const sprite = new THREE.Sprite(material);
+            sprite.scale.set(definition.size, definition.size, 1);
+            sprite.renderOrder = 11;
+            sprite.userData = {
+                nx: definition.x,
+                ny: definition.y,
+                baseOpacity: definition.opacity,
+                phase: Math.random() * Math.PI * 2,
+                speed: 0.13 + Math.random() * 0.09,
+            };
+            group.add(sprite);
+            sprites.push(sprite);
+        }
+
+        function layout(aspect) {
+            const depth = 360;
+            const halfHeight = Math.tan(THREE.MathUtils.degToRad(28)) * depth;
+            const halfWidth = halfHeight * aspect;
+            for (const sprite of sprites) {
+                const { nx, ny } = sprite.userData;
+                sprite.position.set(
+                    (nx * 2 - 1) * halfWidth,
+                    (1 - ny * 2) * halfHeight,
+                    -depth
+                );
+            }
+        }
+
+        function update(time) {
+            for (const sprite of sprites) {
+                const { baseOpacity, phase, speed } = sprite.userData;
+                sprite.material.opacity = baseOpacity
+                    * (0.9 + Math.sin(time * speed + phase) * 0.1);
+            }
+        }
+
+        layout((window.innerWidth || 1) / Math.max(window.innerHeight || 1, 1));
+
+        return {
+            group,
+            layout,
+            update,
+            dispose() {
+                for (const sprite of sprites) {
+                    sprite.material.dispose();
+                }
+                texture.dispose();
+            },
+        };
+    }
+
+    function buildAnchorStarTexture() {
+        const size = 256;
+        const center = size / 2;
+        const canvas = document.createElement("canvas");
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext("2d");
+
+        const halo = ctx.createRadialGradient(center, center, 0, center, center, center);
+        halo.addColorStop(0, "rgba(255, 255, 255, 1)");
+        halo.addColorStop(0.022, "rgba(255, 255, 255, 0.94)");
+        halo.addColorStop(0.075, "rgba(233, 243, 255, 0.42)");
+        halo.addColorStop(0.19, "rgba(200, 222, 248, 0.14)");
+        halo.addColorStop(0.46, "rgba(172, 201, 236, 0.04)");
+        halo.addColorStop(1, "rgba(150, 186, 226, 0)");
+        ctx.fillStyle = halo;
+        ctx.fillRect(0, 0, size, size);
+
+        ctx.globalCompositeOperation = "lighter";
+
+        function drawRay(gradient, horizontalRay) {
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            if (horizontalRay) {
+                ctx.moveTo(2, center);
+                ctx.quadraticCurveTo(center * 0.76, center - 5.5, center, center - 7);
+                ctx.quadraticCurveTo(center * 1.24, center - 5.5, size - 2, center);
+                ctx.quadraticCurveTo(center * 1.24, center + 5.5, center, center + 7);
+                ctx.quadraticCurveTo(center * 0.76, center + 5.5, 2, center);
+            } else {
+                ctx.moveTo(center, 2);
+                ctx.quadraticCurveTo(center - 5.5, center * 0.76, center - 7, center);
+                ctx.quadraticCurveTo(center - 5.5, center * 1.24, center, size - 2);
+                ctx.quadraticCurveTo(center + 5.5, center * 1.24, center + 7, center);
+                ctx.quadraticCurveTo(center + 5.5, center * 0.76, center, 2);
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+
+        const horizontal = ctx.createLinearGradient(0, 0, size, 0);
+        horizontal.addColorStop(0, "rgba(255, 255, 255, 0)");
+        horizontal.addColorStop(0.32, "rgba(226, 240, 255, 0.02)");
+        horizontal.addColorStop(0.43, "rgba(240, 248, 255, 0.2)");
+        horizontal.addColorStop(0.48, "rgba(255, 255, 255, 0.72)");
+        horizontal.addColorStop(0.5, "rgba(255, 255, 255, 1)");
+        horizontal.addColorStop(0.52, "rgba(255, 255, 255, 0.72)");
+        horizontal.addColorStop(0.57, "rgba(240, 248, 255, 0.2)");
+        horizontal.addColorStop(0.68, "rgba(226, 240, 255, 0.02)");
+        horizontal.addColorStop(1, "rgba(255, 255, 255, 0)");
+        drawRay(horizontal, true);
+
+        const vertical = ctx.createLinearGradient(0, 0, 0, size);
+        vertical.addColorStop(0, "rgba(255, 255, 255, 0)");
+        vertical.addColorStop(0.32, "rgba(226, 240, 255, 0.02)");
+        vertical.addColorStop(0.43, "rgba(240, 248, 255, 0.2)");
+        vertical.addColorStop(0.48, "rgba(255, 255, 255, 0.72)");
+        vertical.addColorStop(0.5, "rgba(255, 255, 255, 1)");
+        vertical.addColorStop(0.52, "rgba(255, 255, 255, 0.72)");
+        vertical.addColorStop(0.57, "rgba(240, 248, 255, 0.2)");
+        vertical.addColorStop(0.68, "rgba(226, 240, 255, 0.02)");
+        vertical.addColorStop(1, "rgba(255, 255, 255, 0)");
+        drawRay(vertical, false);
+
+        ctx.globalCompositeOperation = "source-over";
+        const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.needsUpdate = true;
+        return texture;
+    }
+
+    function createStarRiver(isMobileViewport) {
+        const isMobile = typeof isMobileViewport === "boolean"
+            ? isMobileViewport
+            : matchMedia("(max-width: 768px)").matches;
+        const count = isMobile ? 2400 : 4800;
+        const aspect = (window.innerWidth || 1) / Math.max(window.innerHeight || 1, 1);
+        const halfFov = Math.tan(THREE.MathUtils.degToRad(28));
+        const positions = new Float32Array(count * 3);
+        const colors = new Float32Array(count * 3);
+        const scales = new Float32Array(count);
+        const alphas = new Float32Array(count);
+        const phases = new Float32Array(count);
+        const twinkles = new Float32Array(count);
+        const sparkles = new Float32Array(count);
+        const tints = [
+            [0.86, 0.93, 1.0],
+            [0.64, 0.8, 1.0],
+            [1.0, 0.95, 0.85],
+            [0.92, 0.97, 1.0],
+        ];
+
+        function gaussian() {
+            let u = 0;
+            let v = 0;
+            while (u === 0) u = Math.random();
+            while (v === 0) v = Math.random();
+            return Math.sqrt(-2 * Math.log(u)) * Math.cos(Math.PI * 2 * v);
+        }
+
+        for (let i = 0; i < count; i += 1) {
+            const bulge = Math.random() < 0.16;
+            const along = THREE.MathUtils.clamp(
+                bulge ? 0.52 + gaussian() * 0.1 : Math.random(),
+                0,
+                1
+            );
+            const spine = Math.random() < 0.22;
+            const core = Math.random() < 0.64;
+            const sx = -0.12 + along * 1.24;
+            const sy = 0.3
+                + along * 0.39
+                + Math.sin(along * Math.PI * 1.6 + 0.7) * 0.025
+                + gaussian() * (spine ? 0.0065 : core ? 0.022 : 0.058);
+            const depth = 395 + Math.random() * 135;
+            const halfHeight = halfFov * depth;
+            const halfWidth = halfHeight * aspect;
+
+            positions[i * 3] = (sx * 2 - 1) * halfWidth;
+            positions[i * 3 + 1] = (1 - sy * 2) * halfHeight;
+            positions[i * 3 + 2] = -depth;
+
+            const roll = Math.random();
+            let scale;
+            let alpha;
+            if (roll > 0.972) {
+                scale = 2.4 + Math.random() * 1.2;
+                alpha = 0.78 + Math.random() * 0.22;
+                sparkles[i] = Math.random() < 0.1 ? 0.6 + Math.random() * 0.4 : 0;
+            } else if (roll > 0.7) {
+                scale = 1.3 + Math.random() * 0.8;
+                alpha = 0.42 + Math.random() * 0.32;
+            } else if (spine) {
+                scale = 0.9 + Math.random() * 0.6;
+                alpha = 0.26 + Math.random() * 0.36;
+            } else {
+                scale = 0.74 + Math.random() * 0.5;
+                alpha = 0.15 + Math.random() * 0.23;
+            }
+            if (bulge) {
+                scale *= 1.1;
+                alpha *= 1.18;
+            }
+            scales[i] = scale;
+            alphas[i] = alpha;
+
+            const tintRoll = Math.random();
+            const tint = tintRoll < 0.12
+                ? tints[2]
+                : tintRoll < 0.38
+                    ? tints[1]
+                    : tints[Math.random() < 0.5 ? 0 : 3];
+            colors[i * 3] = tint[0];
+            colors[i * 3 + 1] = tint[1];
+            colors[i * 3 + 2] = tint[2];
+            phases[i] = Math.random() * Math.PI * 2;
+            twinkles[i] = Math.random() < 0.42
+                ? 0.055 + Math.random() * 0.13
+                : 0;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute("position", new THREE.BufferAttribute(positions, 3));
+        geometry.setAttribute("aStarColor", new THREE.BufferAttribute(colors, 3));
+        geometry.setAttribute("aScale", new THREE.BufferAttribute(scales, 1));
+        geometry.setAttribute("aAlpha", new THREE.BufferAttribute(alphas, 1));
+        geometry.setAttribute("aPhase", new THREE.BufferAttribute(phases, 1));
+        geometry.setAttribute("aTwinkle", new THREE.BufferAttribute(twinkles, 1));
+        geometry.setAttribute("aSparkle", new THREE.BufferAttribute(sparkles, 1));
+
+        const material = new THREE.ShaderMaterial({
+            transparent: true,
+            depthTest: true,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            uniforms: {
+                uTime: { value: 0 },
+                uPixelRatio: { value: 1 },
+            },
+            vertexShader: `
+                attribute vec3 aStarColor;
+                attribute float aScale;
+                attribute float aAlpha;
+                attribute float aPhase;
+                attribute float aTwinkle;
+                attribute float aSparkle;
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying float vPhase;
+                varying float vTwinkle;
+                varying float vSparkle;
+                uniform float uPixelRatio;
+
+                void main() {
+                    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    gl_PointSize = clamp(
+                        aScale * uPixelRatio * (560.0 / max(1.0, -mvPosition.z)),
+                        1.1,
+                        11.0
+                    );
+                    gl_Position = projectionMatrix * mvPosition;
+                    vColor = aStarColor;
+                    vAlpha = aAlpha;
+                    vPhase = aPhase;
+                    vTwinkle = aTwinkle;
+                    vSparkle = aSparkle;
+                }
+            `,
+            fragmentShader: `
+                uniform float uTime;
+                varying vec3 vColor;
+                varying float vAlpha;
+                varying float vPhase;
+                varying float vTwinkle;
+                varying float vSparkle;
+
+                void main() {
+                    vec2 centered = gl_PointCoord - vec2(0.5);
+                    float dist = length(centered) * 2.0;
+                    if (dist > 1.0) discard;
+
+                    float core = 1.0 - smoothstep(0.2, 0.36, dist);
+                    float halo = exp(-dist * dist * 8.5) * 0.16;
+                    float ray = 0.0;
+                    if (vSparkle > 0.0) {
+                        vec2 axis = abs(centered);
+                        float horizontal = exp(-axis.y * 34.0)
+                            * (1.0 - smoothstep(0.05, 0.5, axis.x));
+                        float vertical = exp(-axis.x * 34.0)
+                            * (1.0 - smoothstep(0.05, 0.5, axis.y));
+                        ray = (horizontal + vertical) * 0.2 * vSparkle;
+                    }
+
+                    float shimmer = vTwinkle > 0.0
+                        ? sin(uTime * vTwinkle + vPhase) * 0.07
+                        : 0.0;
+                    float alpha = (core + halo + ray) * vAlpha * (1.0 + shimmer);
+                    if (alpha < 0.004) discard;
+
+                    gl_FragColor = vec4(vColor, min(alpha, 1.0));
+                    #include <colorspace_fragment>
+                }
+            `,
+        });
+
+        const points = new THREE.Points(geometry, material);
+        points.renderOrder = 9;
+        return { geometry, material, points };
+    }
+
+    function createGalaxyBand() {
+        const texture = buildGalaxyTexture();
+        texture.colorSpace = THREE.SRGBColorSpace;
+        texture.minFilter = THREE.LinearMipmapLinearFilter;
+        texture.magFilter = THREE.LinearFilter;
+        texture.needsUpdate = true;
+
+        const geometry = new THREE.PlaneGeometry(2400, 1200);
+        const material = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            depthTest: false,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            opacity: 1.0,
+            color: 0xd8e7ff,
+            toneMapped: false,
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        mesh.position.set(0, 0, -520);
+        mesh.rotation.z = -0.175;
+        mesh.frustumCulled = false;
+        mesh.renderOrder = -30;
+        return { mesh, geometry, material, texture };
+    }
+
+    function buildGalaxyTexture() {
+        const width = 1536;
+        const height = 768;
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        const TAU = Math.PI * 2;
+
+        function gaussian() {
+            let u = 0;
+            let v = 0;
+            while (u === 0) u = Math.random();
+            while (v === 0) v = Math.random();
+            return Math.sqrt(-2 * Math.log(u)) * Math.cos(TAU * v);
+        }
+
+        function bandCurve(x) {
+            const t = x / width;
+            return height * 0.49
+                + Math.sin(t * Math.PI * 1.35 + 0.8) * height * 0.045
+                + Math.sin(t * Math.PI * 3.6 + 1.3) * height * 0.009;
+        }
+
+        function rgba(color, alpha) {
+            return `rgba(${color[0]}, ${color[1]}, ${color[2]}, ${alpha})`;
+        }
+
+        function paintCloud(x, y, rx, ry, rotation, color, alpha) {
+            ctx.save();
+            ctx.translate(x, y);
+            ctx.rotate(rotation);
+            ctx.scale(rx, ry);
+            const gradient = ctx.createRadialGradient(0, 0, 0, 0, 0, 1);
+            gradient.addColorStop(0, rgba(color, alpha));
+            gradient.addColorStop(0.34, rgba(color, alpha * 0.5));
+            gradient.addColorStop(0.7, rgba(color, alpha * 0.13));
+            gradient.addColorStop(1, rgba(color, 0));
+            ctx.fillStyle = gradient;
+            ctx.beginPath();
+            ctx.arc(0, 0, 1, 0, TAU);
+            ctx.fill();
+            ctx.restore();
+        }
+
+        const cool = [
+            [58, 96, 154],
+            [70, 118, 178],
+            [86, 140, 198],
+        ];
+        const pale = [
+            [166, 194, 232],
+            [204, 224, 248],
+            [234, 243, 255],
+        ];
+        const warm = [255, 233, 206];
+
+        ctx.clearRect(0, 0, width, height);
+        ctx.globalCompositeOperation = "lighter";
+
+        // 贴着河带的极淡底晕，只给银河一点厚度，不向整屏铺开
+        for (let i = 0; i < 34; i += 1) {
+            const x = -width * 0.04 + Math.random() * width * 1.08;
+            const y = bandCurve(x) + gaussian() * height * 0.035;
+            paintCloud(
+                x,
+                y,
+                width * (0.04 + Math.random() * 0.07),
+                height * (0.01 + Math.random() * 0.02),
+                (Math.random() - 0.5) * 0.7,
+                cool[(Math.random() * cool.length) | 0],
+                0.008 + Math.random() * 0.01
+            );
+        }
+
+        // 银河主体：窄而断续的银色尘带
+        for (let i = 0; i < 190; i += 1) {
+            const x = width * (0.02 + Math.random() * 0.96);
+            const y = bandCurve(x) + gaussian() * height * 0.018;
+            paintCloud(
+                x,
+                y,
+                width * (0.01 + Math.random() * 0.03),
+                height * (0.0035 + Math.random() * 0.008),
+                (Math.random() - 0.5) * 0.7,
+                cool[(Math.random() * cool.length) | 0],
+                0.04 + Math.random() * 0.04
+            );
+        }
+
+        // 沿河带铺一层很淡的月白辉光，先让银河有“体积”
+        for (let i = 0; i < 20; i += 1) {
+            const x = width * (0.04 + Math.random() * 0.92);
+            const y = bandCurve(x) + gaussian() * height * 0.024;
+            paintCloud(
+                x,
+                y,
+                width * (0.08 + Math.random() * 0.11),
+                height * (0.018 + Math.random() * 0.022),
+                (Math.random() - 0.5) * 0.3,
+                pale[(Math.random() * pale.length) | 0],
+                0.008 + Math.random() * 0.008
+            );
+        }
+
+        // 银心：一团柔和的星辰密集区，作为深空里的视觉重心
+        for (let i = 0; i < 22; i += 1) {
+            const x = width * (0.44 + Math.random() * 0.16);
+            const y = bandCurve(x) + gaussian() * height * 0.009;
+            paintCloud(
+                x,
+                y,
+                width * (0.008 + Math.random() * 0.02),
+                height * (0.0015 + Math.random() * 0.0034),
+                (Math.random() - 0.5) * 0.25,
+                Math.random() < 0.3 ? warm : pale[(Math.random() * pale.length) | 0],
+                0.045 + Math.random() * 0.05
+            );
+        }
+        for (let i = 0; i < 6; i += 1) {
+            const x = width * (0.4 + Math.random() * 0.2);
+            const y = bandCurve(x) + gaussian() * height * 0.015;
+            paintCloud(
+                x,
+                y,
+                width * (0.03 + Math.random() * 0.035),
+                height * (0.01 + Math.random() * 0.012),
+                (Math.random() - 0.5) * 0.2,
+                [206, 224, 246],
+                0.005 + Math.random() * 0.005
+            );
+        }
+
+        // 更亮的核心与团块，集中在河带中段
+        for (let i = 0; i < 72; i += 1) {
+            const t = 0.18 + Math.random() * 0.64;
+            const x = width * t;
+            const y = bandCurve(x) + gaussian() * height * 0.006;
+            paintCloud(
+                x,
+                y,
+                width * (0.006 + Math.random() * 0.015),
+                height * (0.0012 + Math.random() * 0.0026),
+                (Math.random() - 0.5) * 0.22,
+                Math.random() < 0.14 ? warm : pale[(Math.random() * pale.length) | 0],
+                0.07 + Math.random() * 0.06
+            );
+        }
+
+        // 银心附近的一团柔光，让河带有明暗重心
+        for (let i = 0; i < 7; i += 1) {
+            const x = width * (0.34 + Math.random() * 0.34);
+            const y = bandCurve(x) + gaussian() * height * 0.014;
+            paintCloud(
+                x,
+                y,
+                width * (0.055 + Math.random() * 0.07),
+                height * (0.012 + Math.random() * 0.014),
+                (Math.random() - 0.5) * 0.25,
+                pale[(Math.random() * pale.length) | 0],
+                0.006 + Math.random() * 0.006
+            );
+        }
+
+        // 几处冷色星云薄纱，给银河一点空灵的颜色层次
+        const accent = [
+            [88, 132, 198],
+            [112, 158, 210],
+            [80, 146, 168],
+            [112, 124, 190],
+        ];
+        for (let i = 0; i < 7; i += 1) {
+            const t = 0.12 + Math.random() * 0.76;
+            const x = width * t;
+            const y = bandCurve(x) + gaussian() * height * 0.012;
+            paintCloud(
+                x,
+                y,
+                width * (0.03 + Math.random() * 0.045),
+                height * (0.007 + Math.random() * 0.012),
+                (Math.random() - 0.5) * 0.3,
+                accent[(Math.random() * accent.length) | 0],
+                0.004 + Math.random() * 0.006
+            );
+        }
+
+        // 暗尘裂缝：在河带里擦出几道空隙，增强纵深
+        ctx.globalCompositeOperation = "destination-out";
+        for (let i = 0; i < 22; i += 1) {
+            const x = width * (0.08 + Math.random() * 0.84);
+            const y = bandCurve(x) + (Math.random() - 0.5) * height * 0.02;
+            paintCloud(
+                x,
+                y,
+                width * (0.025 + Math.random() * 0.055),
+                height * (0.0018 + Math.random() * 0.0042),
+                (Math.random() - 0.5) * 0.7,
+                [0, 0, 0],
+                0.32 + Math.random() * 0.26
+            );
+        }
+
+        // 细碎星尘，保持颗粒感
+        ctx.globalCompositeOperation = "lighter";
+        for (let i = 0; i < 1800; i += 1) {
+            const x = -width * 0.05 + Math.random() * width * 1.1;
+            const y = bandCurve(x) + gaussian() * height * 0.036;
+            const r = Math.random() < 0.012
+                ? 0.5 + Math.random() * 0.55
+                : 0.14 + Math.random() * 0.34;
+            const alpha = 0.03 + Math.pow(Math.random(), 2.0) * 0.3;
+            const color = Math.random() < 0.05 ? [255, 236, 210] : [208, 226, 246];
+            ctx.fillStyle = rgba(color, alpha);
+            ctx.beginPath();
+            ctx.arc(x, y, r, 0, TAU);
+            ctx.fill();
+        }
+
+        // 几处星团，让河带的细节更接近真实深空照片
+        for (let c = 0; c < 10; c += 1) {
+            const cx = width * (0.08 + Math.random() * 0.84);
+            const cy = bandCurve(cx) + gaussian() * height * 0.012;
+            const spreadX = width * (0.006 + Math.random() * 0.012);
+            const spreadY = height * (0.004 + Math.random() * 0.007);
+            for (let i = 0; i < 34; i += 1) {
+                const x = cx + gaussian() * spreadX;
+                const y = cy + gaussian() * spreadY;
+                const r = 0.15 + Math.random() * 0.5;
+                const alpha = 0.06 + Math.pow(Math.random(), 1.6) * 0.24;
+                const color = Math.random() < 0.08 ? [255, 236, 210] : [212, 230, 250];
+                ctx.fillStyle = rgba(color, alpha);
+                ctx.beginPath();
+                ctx.arc(x, y, r, 0, TAU);
+                ctx.fill();
+            }
+        }
+
+        // 四边柔和淡出，避免出现纹理边界
+        ctx.globalCompositeOperation = "destination-in";
+        const fadeX = ctx.createLinearGradient(0, 0, width, 0);
+        fadeX.addColorStop(0, "rgba(255, 255, 255, 0)");
+        fadeX.addColorStop(0.16, "rgba(255, 255, 255, 1)");
+        fadeX.addColorStop(0.84, "rgba(255, 255, 255, 1)");
+        fadeX.addColorStop(1, "rgba(255, 255, 255, 0)");
+        ctx.fillStyle = fadeX;
+        ctx.fillRect(0, 0, width, height);
+
+        const fadeY = ctx.createLinearGradient(0, 0, 0, height);
+        fadeY.addColorStop(0, "rgba(255, 255, 255, 0)");
+        fadeY.addColorStop(0.2, "rgba(255, 255, 255, 1)");
+        fadeY.addColorStop(0.8, "rgba(255, 255, 255, 1)");
+        fadeY.addColorStop(1, "rgba(255, 255, 255, 0)");
+        ctx.fillStyle = fadeY;
+        ctx.fillRect(0, 0, width, height);
+        ctx.globalCompositeOperation = "source-over";
+
+        return new THREE.CanvasTexture(canvas);
+    }
+
+    function createMeteorField() {
+        const tailCount = 22;
+        const positions = new Float32Array(tailCount * 3);
+        const colors = new Float32Array(tailCount * 3);
+        for (let i = 0; i < tailCount; i += 1) {
+            const fade = Math.pow(1 - i / (tailCount - 1), 2.3);
+            colors[i * 3] = 0.74 * fade;
+            colors[i * 3 + 1] = 0.86 * fade;
+            colors[i * 3 + 2] = 1.0 * fade;
+        }
+
+        const geometry = new THREE.BufferGeometry();
+        const positionAttribute = new THREE.BufferAttribute(positions, 3);
+        positionAttribute.setUsage(THREE.DynamicDrawUsage);
+        geometry.setAttribute("position", positionAttribute);
+        geometry.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+
+        const lineMaterial = new THREE.LineBasicMaterial({
+            vertexColors: true,
+            transparent: true,
+            opacity: 0,
+            blending: THREE.AdditiveBlending,
+            depthTest: false,
+            depthWrite: false,
+            toneMapped: false,
+        });
+        const line = new THREE.Line(geometry, lineMaterial);
+        line.frustumCulled = false;
+        line.visible = false;
+        line.renderOrder = 12;
+
+        const headTexture = buildGlowTexture();
+        const headMaterial = new THREE.SpriteMaterial({
+            map: headTexture,
+            color: 0xdceeff,
+            transparent: true,
+            opacity: 0,
+            depthTest: false,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+            toneMapped: false,
+        });
+        const head = new THREE.Sprite(headMaterial);
+        head.scale.set(8, 8, 1);
+        head.visible = false;
+        head.renderOrder = 13;
+
+        const group = new THREE.Group();
+        group.add(line);
+        group.add(head);
+
+        const state = {
+            active: false,
+            startedAt: 0,
+            nextAt: performance.now() + 6500 + Math.random() * 7500,
+            duration: 1,
+            travel: 0,
+            tail: 0,
+            start: new THREE.Vector3(),
+            direction: new THREE.Vector3(),
+        };
+
+        function start(now) {
+            const z = -300;
+            const aspect = (window.innerWidth || 1) / Math.max(window.innerHeight || 1, 1);
+            const halfHeight = Math.tan(THREE.MathUtils.degToRad(28)) * -z;
+            const halfWidth = halfHeight * aspect;
+            const fromLeft = Math.random() < 0.55;
+            const startX = fromLeft
+                ? -halfWidth * (0.88 + Math.random() * 0.16)
+                : halfWidth * (0.46 + Math.random() * 0.32);
+            const startY = halfHeight * (0.34 + Math.random() * 0.46);
+            const dx = (fromLeft ? 1 : -1) * halfWidth * (0.56 + Math.random() * 0.36);
+            const dy = -halfHeight * (0.3 + Math.random() * 0.42);
+
+            state.start.set(startX, startY, z);
+            state.direction.set(dx, dy, 0);
+            state.travel = Math.hypot(dx, dy);
+            state.tail = state.travel * (0.16 + Math.random() * 0.12);
+            state.duration = 0.85 + Math.random() * 0.45;
+            state.startedAt = now;
+            state.active = true;
+            line.visible = true;
+            head.visible = true;
+        }
+
+        function update(now) {
+            if (!state.active) {
+                if (now < state.nextAt) return;
+                start(now);
+            }
+
+            const progress = (now - state.startedAt) / (state.duration * 1000);
+            if (progress >= 1) {
+                state.active = false;
+                state.nextAt = now + 18000 + Math.random() * 20000;
+                line.visible = false;
+                head.visible = false;
+                lineMaterial.opacity = 0;
+                headMaterial.opacity = 0;
+                return;
+            }
+
+            const dx = state.direction.x / state.travel;
+            const dy = state.direction.y / state.travel;
+            const headX = state.start.x + state.direction.x * progress;
+            const headY = state.start.y + state.direction.y * progress;
+
+            for (let i = 0; i < tailCount; i += 1) {
+                const step = (i / (tailCount - 1)) * state.tail;
+                positions[i * 3] = headX - dx * step;
+                positions[i * 3 + 1] = headY - dy * step;
+                positions[i * 3 + 2] = state.start.z;
+            }
+            positionAttribute.needsUpdate = true;
+
+            const fadeIn = Math.min(1, progress / 0.13);
+            const fadeOut = Math.min(1, (1 - progress) / 0.34);
+            const envelope = Math.max(0, Math.min(fadeIn, fadeOut));
+            lineMaterial.opacity = envelope * 0.55;
+            headMaterial.opacity = envelope * 0.4;
+            head.position.set(headX, headY, state.start.z + 1);
+        }
+
+        return {
+            group,
+            update,
+            dispose() {
+                geometry.dispose();
+                lineMaterial.dispose();
+                headTexture.dispose();
+                headMaterial.dispose();
+            },
+        };
     }
 
     function createMoon(moonTextureUrl) {
@@ -762,8 +1714,8 @@ import { SITE_CONFIG } from "./config.js";
             transparent: true,
             depthWrite: false,
             depthTest: false,
-            opacity: 0.95,
-            color: 0xf5f4ef,
+            opacity: 0.96,
+            color: 0xf2f5f7,
         });
         const moonSprite = new THREE.Sprite(moonMaterial);
         moonSprite.position.set(168, 120, -312);
@@ -776,18 +1728,36 @@ import { SITE_CONFIG } from "./config.js";
             transparent: true,
             depthWrite: false,
             depthTest: false,
-            opacity: 0.42,
-            color: 0xe7eef9,
+            blending: THREE.AdditiveBlending,
+            opacity: 0.33,
+            color: 0xdde9f7,
+            toneMapped: false,
         });
         const glowSprite = new THREE.Sprite(glowMaterial);
         glowSprite.position.copy(moonSprite.position);
-        glowSprite.scale.set(148, 148, 1);
+        glowSprite.scale.set(132, 132, 1);
         glowSprite.renderOrder = 29;
+
+        const auraMaterial = new THREE.SpriteMaterial({
+            map: glowTexture,
+            transparent: true,
+            depthWrite: false,
+            depthTest: false,
+            blending: THREE.AdditiveBlending,
+            opacity: 0.06,
+            color: 0x86abc9,
+            toneMapped: false,
+        });
+        const auraSprite = new THREE.Sprite(auraMaterial);
+        auraSprite.position.copy(moonSprite.position);
+        auraSprite.scale.set(190, 190, 1);
+        auraSprite.renderOrder = 28;
 
         return {
             occluder: occluderSprite,
             sprite: moonSprite,
             glow: glowSprite,
+            aura: auraSprite,
         };
     }
 
@@ -797,15 +1767,18 @@ import { SITE_CONFIG } from "./config.js";
         const moonX = THREE.MathUtils.lerp(160, 54, narrowness);
         const moonY = THREE.MathUtils.lerp(116, 86, narrowness);
         const moonScale = THREE.MathUtils.lerp(58, 46, narrowness);
-        const glowScale = THREE.MathUtils.lerp(148, 112, narrowness);
+        const glowScale = THREE.MathUtils.lerp(132, 106, narrowness);
+        const auraScale = THREE.MathUtils.lerp(215, 172, narrowness);
         const occluderScale = moonScale * 1.08;
 
         moon.occluder.position.set(moonX, moonY, -312);
         moon.occluder.scale.set(occluderScale, occluderScale, 1);
         moon.sprite.position.set(moonX, moonY, -312);
         moon.glow.position.copy(moon.sprite.position);
+        moon.aura.position.copy(moon.sprite.position);
         moon.sprite.scale.set(moonScale, moonScale, 1);
         moon.glow.scale.set(glowScale, glowScale, 1);
+        moon.aura.scale.set(auraScale, auraScale, 1);
     }
 
     function createMotionController(gyroVelocity) {
@@ -904,6 +1877,7 @@ import { SITE_CONFIG } from "./config.js";
         context.fillRect(0, 0, canvas.width, canvas.height);
 
         const texture = new THREE.CanvasTexture(canvas);
+        texture.colorSpace = THREE.SRGBColorSpace;
         texture.needsUpdate = true;
         return texture;
     }
