@@ -1,0 +1,18 @@
+# Tool and editor state
+.commandcode/
+.qoder/
+.claude/
+.cursor/
+.vscode/
+.idea/
+
+# Screenshot and visual test output
+screenshots/
+test-screenshots/
+__screenshots__/
+playwright-report/
+test-results/
+
+# OS files
+.DS_Store
+Thumbs.db

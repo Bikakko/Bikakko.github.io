@@ -147,16 +147,20 @@ body.secret-dragging * {
 .card-item {
     position: relative;
     display: block;
-    padding: 9px;
+    padding: 7px;
     aspect-ratio: 6 / 4;
     cursor: pointer;
     text-decoration: none;
-    border-radius: 36px;
+    border-radius: 44px;
     isolation: isolate;
+    box-shadow:
+        0 0 0 1px rgba(138, 175, 212, 0.10),
+        0 0 18px rgba(4, 11, 21, 0.35),
+        0 0 30px rgba(110, 150, 190, 0.05);
     transition: transform 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-/* 边框本体：夜空色，边界被晕染开 */
+/* 边框本体：夜空色，圆角墨块，边缘被模糊晕开 */
 .card-item::before {
     content: "";
     position: absolute;
@@ -164,35 +168,20 @@ body.secret-dragging * {
     z-index: 0;
     border-radius: inherit;
     background: linear-gradient(180deg, #04101c 0%, #071522 52%, #0a1a2b 100%);
-    filter: blur(6px);
-    -webkit-mask-image:
-        linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.35) 2%, rgba(0, 0, 0, 0.8) 5%, #000 9%, #000 91%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 0.35) 98%, transparent 100%),
-        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.35) 2%, rgba(0, 0, 0, 0.8) 5%, #000 9%, #000 91%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 0.35) 98%, transparent 100%);
-    -webkit-mask-repeat: no-repeat;
-    -webkit-mask-composite: source-in;
-    mask-image:
-        linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.35) 2%, rgba(0, 0, 0, 0.8) 5%, #000 9%, #000 91%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 0.35) 98%, transparent 100%),
-        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.35) 2%, rgba(0, 0, 0, 0.8) 5%, #000 9%, #000 91%, rgba(0, 0, 0, 0.8) 95%, rgba(0, 0, 0, 0.35) 98%, transparent 100%);
-    mask-repeat: no-repeat;
-    mask-composite: intersect;
+    filter: blur(3px);
     pointer-events: none;
 }
 
-/* 更外一层的墨晕，向星空慢慢化开 */
+/* 更外一层的墨晕：圆角矩形云，向星空慢慢化开 */
 .card-item::after {
     content: "";
     position: absolute;
-    inset: -13px;
+    inset: -11px;
     z-index: -1;
-    border-radius: 50px;
-    background: radial-gradient(
-        ellipse at 50% 52%,
-        rgba(7, 18, 31, 0.62) 0%,
-        rgba(7, 18, 31, 0.30) 55%,
-        transparent 78%
-    );
-    filter: blur(18px);
-    opacity: 0.78;
+    border-radius: 58px;
+    background: rgba(6, 16, 28, 0.52);
+    filter: blur(20px);
+    opacity: 0.85;
     pointer-events: none;
     transition: opacity 0.45s ease, transform 0.45s ease;
 }
@@ -219,19 +208,16 @@ body.secret-dragging * {
     z-index: 1;
     width: 100%;
     height: 100%;
-    border-radius: 28px;
     overflow: hidden;
-    /* 边缘羽化：画面从实到虚，慢慢没入墨色夜空 */
-    -webkit-mask-image:
-        linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.22) 2.5%, rgba(0, 0, 0, 0.62) 6.5%, rgba(0, 0, 0, 0.9) 10%, #000 14%, #000 86%, rgba(0, 0, 0, 0.9) 90%, rgba(0, 0, 0, 0.62) 93.5%, rgba(0, 0, 0, 0.22) 97.5%, transparent 100%),
-        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.22) 3%, rgba(0, 0, 0, 0.62) 8%, rgba(0, 0, 0, 0.9) 12%, #000 17%, #000 83%, rgba(0, 0, 0, 0.9) 88%, rgba(0, 0, 0, 0.62) 92%, rgba(0, 0, 0, 0.22) 97%, transparent 100%);
+    /* 单层遮罩：圆角与四边的羽化都烘焙在蒙版里，避免浏览器合成差异 */
+    -webkit-mask-image: url("./assets/images/card-mask.png?v=1");
+    mask-image: url("./assets/images/card-mask.png?v=1");
+    -webkit-mask-size: 100% 100%;
+    mask-size: 100% 100%;
     -webkit-mask-repeat: no-repeat;
-    -webkit-mask-composite: source-in;
-    mask-image:
-        linear-gradient(90deg, transparent 0%, rgba(0, 0, 0, 0.22) 2.5%, rgba(0, 0, 0, 0.62) 6.5%, rgba(0, 0, 0, 0.9) 10%, #000 14%, #000 86%, rgba(0, 0, 0, 0.9) 90%, rgba(0, 0, 0, 0.62) 93.5%, rgba(0, 0, 0, 0.22) 97.5%, transparent 100%),
-        linear-gradient(180deg, transparent 0%, rgba(0, 0, 0, 0.22) 3%, rgba(0, 0, 0, 0.62) 8%, rgba(0, 0, 0, 0.9) 12%, #000 17%, #000 83%, rgba(0, 0, 0, 0.9) 88%, rgba(0, 0, 0, 0.62) 92%, rgba(0, 0, 0, 0.22) 97%, transparent 100%);
     mask-repeat: no-repeat;
-    mask-composite: intersect;
+    -webkit-mask-mode: alpha;
+    mask-mode: alpha;
 }
 
 /* 墨色向内蕴散，图片边缘融进夜空 */
@@ -240,35 +226,14 @@ body.secret-dragging * {
     position: absolute;
     inset: 0;
     z-index: 2;
-    border-radius: inherit;
-    background: radial-gradient(
-        ellipse 84% 88% at 49% 47%,
-        transparent 52%,
-        rgba(5, 15, 27, 0.16) 68%,
-        rgba(5, 15, 27, 0.46) 84%,
-        rgba(5, 15, 27, 0.82) 100%
-    );
-    box-shadow:
-        inset 0 0 18px rgba(5, 15, 27, 0.85),
-        inset 0 0 42px rgba(5, 15, 27, 0.45),
-        inset 6px -6px 48px rgba(5, 15, 27, 0.18);
+    box-shadow: inset 0 0 26px rgba(5, 15, 27, 0.24);
     pointer-events: none;
-    transition: background 0.45s ease, box-shadow 0.45s ease;
+    transition: box-shadow 0.45s ease;
 }
 
 .card-item:hover .card-media::before,
 .card-item:focus-visible .card-media::before {
-    background: radial-gradient(
-        ellipse 84% 88% at 49% 47%,
-        transparent 54%,
-        rgba(5, 15, 27, 0.12) 70%,
-        rgba(5, 15, 27, 0.38) 86%,
-        rgba(5, 15, 27, 0.74) 100%
-    );
-    box-shadow:
-        inset 0 0 16px rgba(5, 15, 27, 0.78),
-        inset 0 0 38px rgba(5, 15, 27, 0.36),
-        inset 6px -6px 44px rgba(5, 15, 27, 0.14);
+    box-shadow: inset 0 0 22px rgba(5, 15, 27, 0.18);
 }
 
 .card-cover {
@@ -276,7 +241,6 @@ body.secret-dragging * {
     height: 100%;
     display: block;
     object-fit: cover;
-    border-radius: 28px;
     transition: transform 0.45s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
@@ -329,18 +293,13 @@ body.secret-dragging * {
     }
 
     .card-item {
-        border-radius: 30px;
-        padding: 8px;
+        border-radius: 36px;
+        padding: 5px;
     }
 
     .card-item::after {
         inset: -7px;
-        border-radius: 38px;
-    }
-
-    .card-media,
-    .card-cover {
-        border-radius: 22px;
+        border-radius: 46px;
     }
 
 }

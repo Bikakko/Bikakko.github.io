@@ -11,6 +11,101 @@ const STAR_TINTS = [
     [0.86, 0.82, 1.0],
 ];
 
+// 轻微鱼眼：视口当作一枚广角镜片，中心略放大、边缘渐压缩。
+// 畸变在各顶点着色器里完成，不经过离屏后处理，
+// 从而保持与里程碑一致的加法混合与发光色彩。
+const FISHEYE_STRENGTH = 0.2;
+const fisheyeAspectUniform = { value: 1 };
+// 远景（银河/星河/深空星）的镜片弯曲收敛一些：让它们保持平坦遥远，
+// 近景星层与月亮吃满畸变，强化前后距离感。
+const FISHEYE_LAYER_WEIGHTS = {
+    moonNear: 1,
+    near: 1,
+    mid: 0.85,
+    far: 0.6,
+    deep: 0.6,
+};
+function createFisheyeUniforms(weight = 1) {
+    return {
+        uFisheyeStrength: { value: FISHEYE_STRENGTH * weight },
+        uFisheyeAspect: fisheyeAspectUniform,
+    };
+}
+// 月亮靠近画幅边缘：窄屏时降低它的镜片权重，避免被鱼眼推出屏幕
+function moonFisheyeWeight(aspect) {
+    const narrowness = Math.min(Math.max((1.82 - aspect) / 1.08, 0), 1);
+    return 1 - narrowness * 0.5;
+}
+const moonFisheyeUniforms = createFisheyeUniforms(moonFisheyeWeight(1.6));
+const FISHEYE_VERTEX_GLSL = /* glsl */ `
+    uniform float uFisheyeStrength;
+    uniform float uFisheyeAspect;
+
+    vec2 fisheyeDisplay(vec2 p, out float magnification) {
+        float maxR = length(vec2(uFisheyeAspect, 1.0));
+        float sourceR = clamp(length(vec2(p.x * uFisheyeAspect, p.y)) / maxR, 0.0, 1.0);
+        float displayR = sourceR;
+        for (int i = 0; i < 3; i++) {
+            float scale = 1.0 - uFisheyeStrength * (1.0 - displayR * displayR);
+            displayR = sourceR / max(scale, 1e-3);
+        }
+        magnification = sourceR > 1e-6 ? displayR / sourceR : 1.0;
+        return p * magnification;
+    }
+
+    vec4 fisheyeClip(vec4 clip) {
+        float magnification;
+        return vec4(fisheyeDisplay(clip.xy / clip.w, magnification) * clip.w, clip.z, clip.w);
+    }
+
+    vec4 fisheyeClipSize(vec4 clip, out float magnification) {
+        return vec4(fisheyeDisplay(clip.xy / clip.w, magnification) * clip.w, clip.z, clip.w);
+    }
+`;
+
+// 精灵只平移 + 等比缩放，不逐角弯曲，避免月亮/光晕被拉成鸭蛋
+const FISHEYE_SPRITE_CLIP_GLSL = /* glsl */ `
+    vec4 fisheyeCenterView = modelViewMatrix * vec4(0.0, 0.0, 0.0, 1.0);
+    vec4 fisheyeCenterClip = projectionMatrix * fisheyeCenterView;
+    float fisheyeMagnification;
+    vec2 fisheyeCenterNdc = fisheyeDisplay(
+        fisheyeCenterClip.xy / fisheyeCenterClip.w,
+        fisheyeMagnification
+    );
+    vec4 fisheyeOffsetClip = projectionMatrix
+        * vec4(mvPosition.xyz - fisheyeCenterView.xyz, 0.0)
+        * fisheyeMagnification;
+    gl_Position = vec4(
+        fisheyeCenterNdc * fisheyeCenterClip.w,
+        fisheyeCenterClip.z,
+        fisheyeCenterClip.w
+    ) + fisheyeOffsetClip;
+`;
+
+function injectFisheyeShader(material, kind, weight = 1, uniforms = null) {
+    const resolved = uniforms || createFisheyeUniforms(weight);
+    material.onBeforeCompile = (shader) => {
+        shader.uniforms.uFisheyeStrength = resolved.uFisheyeStrength;
+        shader.uniforms.uFisheyeAspect = resolved.uFisheyeAspect;
+        shader.vertexShader = FISHEYE_VERTEX_GLSL + shader.vertexShader;
+        if (shader.vertexShader.includes("gl_Position = projectionMatrix * mvPosition;")) {
+            shader.vertexShader = shader.vertexShader.replace(
+                "gl_Position = projectionMatrix * mvPosition;",
+                kind === "sprite"
+                    ? FISHEYE_SPRITE_CLIP_GLSL
+                    : "gl_Position = fisheyeClip(projectionMatrix * mvPosition);"
+            );
+        } else {
+            shader.vertexShader = shader.vertexShader.replace(
+                "#include <project_vertex>",
+                "#include <project_vertex>\ngl_Position = fisheyeClip(gl_Position);"
+            );
+        }
+    };
+    material.customProgramCacheKey = () => `fisheye-${kind}`;
+    material.needsUpdate = true;
+}
+
 (function () {
     const sceneHost = document.getElementById("home-scene");
     const cardsGrid = document.getElementById("cards-grid");
@@ -199,8 +294,7 @@ const STAR_TINTS = [
 
         const scene = new THREE.Scene();
 
-        // 这片星空是慢速氛围场景：关闭 MSAA、限制像素预算并以 30fps 渲染，
-        // 对 2024 年前后的核显/轻薄本更友好，肉眼几乎看不出差别。
+        // 关闭 MSAA、限制像素预算并以 60fps 渲染，兼顾流畅度与核显负载。
         const renderer = new THREE.WebGLRenderer({
             antialias: false,
             alpha: true,
@@ -221,16 +315,20 @@ const STAR_TINTS = [
         const nearStarGroup = new THREE.Group();
         const midStarGroup = new THREE.Group();
         const farStarGroup = new THREE.Group();
+        const deepStarGroup = new THREE.Group();
+        const deepBackdropGroup = new THREE.Group();
         const moonGroup = new THREE.Group();
 
         scene.add(skyGroup);
         scene.add(celestialGroup);
+        scene.add(deepBackdropGroup);
         scene.add(moonGroup);
         celestialGroup.add(starGroup);
         starGroup.add(moonNearStarGroup);
         starGroup.add(nearStarGroup);
         starGroup.add(midStarGroup);
         starGroup.add(farStarGroup);
+        starGroup.add(deepStarGroup);
 
         const target = { yaw: 0, pitch: 0 };
         const current = { yaw: 0, pitch: 0 };
@@ -261,15 +359,16 @@ const STAR_TINTS = [
         nearStarGroup.add(stars.near.points);
         midStarGroup.add(stars.mid.points);
         farStarGroup.add(stars.far.points);
-        farStarGroup.add(stars.deep.points);
+        deepStarGroup.add(stars.deep.points);
 
         // 极淡的银河尘带只负责提供深空结构，不做整屏雾化
+        // 银河与星河属于深空背景，只跟随视差，不参与天球自转
         const galaxy = createGalaxyBand();
-        farStarGroup.add(galaxy.mesh);
+        deepBackdropGroup.add(galaxy.mesh);
 
         // 星之河用真正的点精灵绘制，保持颗粒清晰，而不是贴一层雾状纹理
         const starRiver = createStarRiver(isMobile);
-        farStarGroup.add(starRiver.points);
+        deepBackdropGroup.add(starRiver.points);
         starLayers.push(starRiver);
 
         const anchorStarGroup = new THREE.Group();
@@ -288,7 +387,7 @@ const STAR_TINTS = [
         scene.add(meteor.group);
 
         const moonScreenPosition = new THREE.Vector3();
-        const targetFrameMs = 1000 / 30;
+        const targetFrameMs = 1000 / 60;
         let rafId = 0;
         let disposed = false;
         let lastPaintAt = 0;
@@ -317,6 +416,9 @@ const STAR_TINTS = [
             camera.updateProjectionMatrix();
             renderer.setPixelRatio(pixelRatio);
             renderer.setSize(renderWidth, renderHeight, false);
+            fisheyeAspectUniform.value = camera.aspect;
+            moonFisheyeUniforms.uFisheyeStrength.value =
+                FISHEYE_STRENGTH * moonFisheyeWeight(camera.aspect);
 
             for (const layer of starLayers) {
                 layer.material.uniforms.uPixelRatio.value = pixelRatio;
@@ -335,8 +437,8 @@ const STAR_TINTS = [
             if (reduceMotion) return;
             const pointerX = (event.clientX / Math.max(window.innerWidth, 1)) * 2 - 1;
             const pointerY = (event.clientY / Math.max(window.innerHeight, 1)) * 2 - 1;
-            target.yaw = pointerX * 0.075;
-            target.pitch = pointerY * 0.068;
+            target.yaw = pointerX * 0.088;
+            target.pitch = pointerY * 0.08;
         }
 
         function onPointerLeave() {
@@ -395,16 +497,21 @@ const STAR_TINTS = [
 
             const skyYaw = 0.34;
             const skyPitch = 0.42;
-            const moonNearYaw = 0.92;
-            const moonNearPitch = 1.04;
-            const nearYaw = 1.14;
-            const nearPitch = 1.26;
-            const midYaw = 1.42;
-            const midPitch = 1.58;
-            const farYaw = 1.78;
-            const farPitch = 1.96;
-            const moonYaw = 0.64;
-            const moonPitch = 0.76;
+            // 视差强度按距离递增：最近层最弱，最远层最强
+            const moonNearYaw = 0.32;
+            const moonNearPitch = 0.32;
+            const nearYaw = 0.5;
+            const nearPitch = 0.5;
+            const midYaw = 0.78;
+            const midPitch = 0.78;
+            const farYaw = 1.06;
+            const farPitch = 1.06;
+            const deepYaw = 1.32;
+            const deepPitch = 1.32;
+            const backdropYaw = 1.45;
+            const backdropPitch = 1.45;
+            const moonYaw = 0.58;
+            const moonPitch = 0.68;
 
             skyGroup.rotation.y = current.yaw * skyYaw;
             skyGroup.rotation.x = current.pitch * skyPitch;
@@ -416,10 +523,15 @@ const STAR_TINTS = [
             midStarGroup.rotation.x = current.pitch * midPitch;
             farStarGroup.rotation.y = current.yaw * farYaw;
             farStarGroup.rotation.x = current.pitch * farPitch;
+            deepStarGroup.rotation.y = current.yaw * deepYaw;
+            deepStarGroup.rotation.x = current.pitch * deepPitch;
+            // 深空背景只保留最强视差，不跟随天球自转
+            deepBackdropGroup.rotation.y = current.yaw * backdropYaw;
+            deepBackdropGroup.rotation.x = current.pitch * backdropPitch;
             moonGroup.rotation.y = current.yaw * moonYaw;
             moonGroup.rotation.x = current.pitch * moonPitch;
-            anchorStarGroup.rotation.y = current.yaw * 1.06;
-            anchorStarGroup.rotation.x = current.pitch * 1.18;
+            anchorStarGroup.rotation.y = current.yaw * nearYaw;
+            anchorStarGroup.rotation.x = current.pitch * nearPitch;
 
             for (const layer of starLayers) {
                 layer.material.uniforms.uTime.value = time;
@@ -438,13 +550,33 @@ const STAR_TINTS = [
             renderer.render(scene, camera);
         }
 
+        // 与顶点着色器同一套畸变的逆解：把源画面 NDC 映射到畸变后的显示位置，
+        // 让月亮的 DOM 入口始终贴在畸变后的月亮上
+        function warpNdc(x, y, aspect, weight = 1) {
+            const strength = FISHEYE_STRENGTH * weight;
+            const sourceR = Math.hypot(x * aspect, y) / Math.hypot(aspect, 1);
+            let displayR = sourceR;
+            for (let i = 0; i < 3; i += 1) {
+                const scale = 1 - strength * (1 - displayR * displayR);
+                displayR = sourceR / Math.max(scale, 1e-3);
+            }
+            const factor = sourceR > 1e-6 ? displayR / sourceR : 1;
+            return { x: x * factor, y: y * factor };
+        }
+
         function updateSecretEntryPosition(width, height) {
             if (!secretEntry) return;
 
             moon.sprite.getWorldPosition(moonScreenPosition);
             moonScreenPosition.project(camera);
-            const x = (moonScreenPosition.x * 0.5 + 0.5) * width;
-            const y = (-moonScreenPosition.y * 0.5 + 0.5) * height;
+            const warped = warpNdc(
+                moonScreenPosition.x,
+                moonScreenPosition.y,
+                width / Math.max(height, 1),
+                moonFisheyeWeight(width / Math.max(height, 1)),
+            );
+            const x = (warped.x * 0.5 + 0.5) * width;
+            const y = (-warped.y * 0.5 + 0.5) * height;
             const size = isMobileLike ? 58 : 70;
 
             if (
@@ -526,16 +658,17 @@ const STAR_TINTS = [
             depthWrite: false,
             depthTest: false,
             uniforms: {
+                ...createFisheyeUniforms(),
                 uZenithColor: { value: new THREE.Color(0x000102) },
                 uUpperColor: { value: new THREE.Color(0x01040b) },
                 uLowerColor: { value: new THREE.Color(0x040f1b) },
             },
-            vertexShader: `
+            vertexShader: FISHEYE_VERTEX_GLSL + `
                 varying vec3 vWorldPosition;
                 void main() {
                     vec4 worldPosition = modelMatrix * vec4(position, 1.0);
                     vWorldPosition = worldPosition.xyz;
-                    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    gl_Position = fisheyeClip(projectionMatrix * modelViewMatrix * vec4(position, 1.0));
                 }
             `,
             fragmentShader: `
@@ -859,10 +992,11 @@ const STAR_TINTS = [
             depthWrite: false,
             blending: THREE.AdditiveBlending,
             uniforms: {
+                ...createFisheyeUniforms(FISHEYE_LAYER_WEIGHTS[config.key] ?? 1),
                 uTime: { value: 0 },
                 uPixelRatio: { value: 1 },
             },
-            vertexShader: `
+            vertexShader: FISHEYE_VERTEX_GLSL + `
                 attribute float aScale;
                 attribute float aAlpha;
                 attribute float aPhase;
@@ -886,12 +1020,13 @@ const STAR_TINTS = [
 
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
                     float starSize = aScale * aDepth * (1.0 + aSparkle * 0.9);
+                    float magnification;
+                    gl_Position = fisheyeClipSize(projectionMatrix * mvPosition, magnification);
                     gl_PointSize = clamp(
-                        starSize * uPixelRatio * (340.0 / max(1.0, -mvPosition.z)),
+                        starSize * uPixelRatio * (340.0 / max(1.0, -mvPosition.z)) * magnification,
                         0.9,
                         44.0
                     );
-                    gl_Position = projectionMatrix * mvPosition;
                 }
             `,
             fragmentShader: `
@@ -970,6 +1105,7 @@ const STAR_TINTS = [
                 opacity: definition.opacity,
                 toneMapped: false,
             });
+            injectFisheyeShader(material, "sprite");
             const sprite = new THREE.Sprite(material);
             sprite.scale.set(definition.size, definition.size, 1);
             sprite.renderOrder = 11;
@@ -1122,19 +1258,21 @@ const STAR_TINTS = [
         }
 
         for (let i = 0; i < count; i += 1) {
-            const bulge = Math.random() < 0.16;
+            const bulgeStar = Math.random() < 0.22;
             const along = THREE.MathUtils.clamp(
-                bulge ? 0.52 + gaussian() * 0.1 : Math.random(),
+                bulgeStar ? 0.52 + gaussian() * 0.09 : Math.random(),
                 0,
                 1
             );
             const spine = Math.random() < 0.22;
             const core = Math.random() < 0.64;
-            const sx = -0.12 + along * 1.24;
+            const sx = -0.5 + along * 2.0;
+            const bulge = Math.exp(-Math.pow((sx - 0.5) / 0.18, 2));
+            const widthScale = 0.5 + 0.9 * bulge;
             const sy = 0.3
-                + along * 0.39
-                + Math.sin(along * Math.PI * 1.6 + 0.7) * 0.025
-                + gaussian() * (spine ? 0.0065 : core ? 0.022 : 0.058);
+                + sx * 0.39
+                + Math.sin(sx * Math.PI * 1.6 + 0.7) * 0.025
+                + gaussian() * (spine ? 0.0065 : core ? 0.022 : 0.058) * widthScale;
             const depth = 395 + Math.random() * 135;
             const halfHeight = halfFov * depth;
             const halfWidth = halfHeight * aspect;
@@ -1142,6 +1280,10 @@ const STAR_TINTS = [
             positions[i * 3] = (sx * 2 - 1) * halfWidth;
             positions[i * 3 + 1] = (1 - sy * 2) * halfHeight;
             positions[i * 3 + 2] = -depth;
+
+            // 星河两端藏在视口之外，避免极限视差时看到断头
+            const edge = THREE.MathUtils.smoothstep(sx, -0.45, -0.2)
+                * (1 - THREE.MathUtils.smoothstep(sx, 1.2, 1.45));
 
             const roll = Math.random();
             let scale;
@@ -1160,12 +1302,12 @@ const STAR_TINTS = [
                 scale = 0.74 + Math.random() * 0.5;
                 alpha = 0.15 + Math.random() * 0.23;
             }
-            if (bulge) {
+            if (bulgeStar) {
                 scale *= 1.1;
                 alpha *= 1.18;
             }
-            scales[i] = scale;
-            alphas[i] = alpha;
+            scales[i] = scale * (0.9 + 0.16 * bulge);
+            alphas[i] = alpha * edge * (0.7 + 0.55 * bulge);
 
             const tintRoll = Math.random();
             const tint = tintRoll < 0.12
@@ -1197,10 +1339,11 @@ const STAR_TINTS = [
             depthWrite: false,
             blending: THREE.AdditiveBlending,
             uniforms: {
+                ...createFisheyeUniforms(FISHEYE_LAYER_WEIGHTS.deep),
                 uTime: { value: 0 },
                 uPixelRatio: { value: 1 },
             },
-            vertexShader: `
+            vertexShader: FISHEYE_VERTEX_GLSL + `
                 attribute vec3 aStarColor;
                 attribute float aScale;
                 attribute float aAlpha;
@@ -1216,12 +1359,13 @@ const STAR_TINTS = [
 
                 void main() {
                     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+                    float magnification;
+                    gl_Position = fisheyeClipSize(projectionMatrix * mvPosition, magnification);
                     gl_PointSize = clamp(
-                        aScale * uPixelRatio * (560.0 / max(1.0, -mvPosition.z)),
+                        aScale * uPixelRatio * (560.0 / max(1.0, -mvPosition.z)) * magnification,
                         1.1,
                         11.0
                     );
-                    gl_Position = projectionMatrix * mvPosition;
                     vColor = aStarColor;
                     vAlpha = aAlpha;
                     vPhase = aPhase;
@@ -1278,7 +1422,7 @@ const STAR_TINTS = [
         texture.magFilter = THREE.LinearFilter;
         texture.needsUpdate = true;
 
-        const geometry = new THREE.PlaneGeometry(2400, 1200);
+        const geometry = new THREE.PlaneGeometry(3000, 1200, 60, 24);
         const material = new THREE.MeshBasicMaterial({
             map: texture,
             transparent: true,
@@ -1289,6 +1433,7 @@ const STAR_TINTS = [
             color: 0xd8e7ff,
             toneMapped: false,
         });
+        injectFisheyeShader(material, "mesh", FISHEYE_LAYER_WEIGHTS.far);
         const mesh = new THREE.Mesh(geometry, material);
         mesh.position.set(0, 0, -520);
         mesh.rotation.z = -0.175;
@@ -1319,6 +1464,22 @@ const STAR_TINTS = [
             return height * 0.49
                 + Math.sin(t * Math.PI * 1.35 + 0.8) * height * 0.045
                 + Math.sin(t * Math.PI * 3.6 + 1.3) * height * 0.009;
+        }
+
+        function smoothstep(value, edge0, edge1) {
+            const x = Math.min(Math.max((value - edge0) / (edge1 - edge0), 0), 1);
+            return x * x * (3 - 2 * x);
+        }
+
+        // 银河的轮廓：中央银心隆起、两端收束成薄雾，避免整条河带头尾等宽
+        function bandProfile(t) {
+            const x = Math.min(Math.max(t, 0), 1);
+            const ends = smoothstep(x, 0.03, 0.2) * (1 - smoothstep(x, 0.8, 0.97));
+            const bulge = Math.exp(-Math.pow((x - 0.5) / 0.12, 2));
+            return {
+                width: ends * (0.28 + 1.15 * bulge),
+                alpha: ends * (0.4 + 0.95 * bulge),
+            };
         }
 
         function rgba(color, alpha) {
@@ -1360,73 +1521,78 @@ const STAR_TINTS = [
         // 贴着河带的极淡底晕，只给银河一点厚度，不向整屏铺开
         for (let i = 0; i < 34; i += 1) {
             const x = -width * 0.04 + Math.random() * width * 1.08;
-            const y = bandCurve(x) + gaussian() * height * 0.035;
+            const profile = bandProfile(x / width);
+            const y = bandCurve(x) + gaussian() * height * 0.035 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.04 + Math.random() * 0.07),
-                height * (0.01 + Math.random() * 0.02),
+                height * (0.01 + Math.random() * 0.02) * profile.width,
                 (Math.random() - 0.5) * 0.7,
                 cool[(Math.random() * cool.length) | 0],
-                0.008 + Math.random() * 0.01
+                (0.008 + Math.random() * 0.01) * profile.alpha
             );
         }
 
         // 银河主体：窄而断续的银色尘带
         for (let i = 0; i < 190; i += 1) {
             const x = width * (0.02 + Math.random() * 0.96);
-            const y = bandCurve(x) + gaussian() * height * 0.018;
+            const profile = bandProfile(x / width);
+            const y = bandCurve(x) + gaussian() * height * 0.018 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.01 + Math.random() * 0.03),
-                height * (0.0035 + Math.random() * 0.008),
+                height * (0.0035 + Math.random() * 0.008) * profile.width,
                 (Math.random() - 0.5) * 0.7,
                 cool[(Math.random() * cool.length) | 0],
-                0.04 + Math.random() * 0.04
+                (0.04 + Math.random() * 0.04) * profile.alpha
             );
         }
 
         // 沿河带铺一层很淡的月白辉光，先让银河有“体积”
         for (let i = 0; i < 20; i += 1) {
             const x = width * (0.04 + Math.random() * 0.92);
-            const y = bandCurve(x) + gaussian() * height * 0.024;
+            const profile = bandProfile(x / width);
+            const y = bandCurve(x) + gaussian() * height * 0.024 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.08 + Math.random() * 0.11),
-                height * (0.018 + Math.random() * 0.022),
+                height * (0.018 + Math.random() * 0.022) * profile.width,
                 (Math.random() - 0.5) * 0.3,
                 pale[(Math.random() * pale.length) | 0],
-                0.008 + Math.random() * 0.008
+                (0.008 + Math.random() * 0.008) * profile.alpha
             );
         }
 
         // 银心：一团柔和的星辰密集区，作为深空里的视觉重心
         for (let i = 0; i < 22; i += 1) {
             const x = width * (0.44 + Math.random() * 0.16);
-            const y = bandCurve(x) + gaussian() * height * 0.009;
+            const profile = bandProfile(x / width);
+            const y = bandCurve(x) + gaussian() * height * 0.009 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.008 + Math.random() * 0.02),
-                height * (0.0015 + Math.random() * 0.0034),
+                height * (0.0015 + Math.random() * 0.0034) * profile.width,
                 (Math.random() - 0.5) * 0.25,
                 Math.random() < 0.3 ? warm : pale[(Math.random() * pale.length) | 0],
-                0.045 + Math.random() * 0.05
+                (0.045 + Math.random() * 0.05) * profile.alpha
             );
         }
         for (let i = 0; i < 6; i += 1) {
             const x = width * (0.4 + Math.random() * 0.2);
-            const y = bandCurve(x) + gaussian() * height * 0.015;
+            const profile = bandProfile(x / width);
+            const y = bandCurve(x) + gaussian() * height * 0.015 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.03 + Math.random() * 0.035),
-                height * (0.01 + Math.random() * 0.012),
+                height * (0.01 + Math.random() * 0.012) * profile.width,
                 (Math.random() - 0.5) * 0.2,
                 [206, 224, 246],
-                0.005 + Math.random() * 0.005
+                (0.005 + Math.random() * 0.005) * profile.alpha
             );
         }
 
@@ -1434,30 +1600,49 @@ const STAR_TINTS = [
         for (let i = 0; i < 72; i += 1) {
             const t = 0.18 + Math.random() * 0.64;
             const x = width * t;
-            const y = bandCurve(x) + gaussian() * height * 0.006;
+            const profile = bandProfile(t);
+            const y = bandCurve(x) + gaussian() * height * 0.006 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.006 + Math.random() * 0.015),
-                height * (0.0012 + Math.random() * 0.0026),
+                height * (0.0012 + Math.random() * 0.0026) * profile.width,
                 (Math.random() - 0.5) * 0.22,
                 Math.random() < 0.14 ? warm : pale[(Math.random() * pale.length) | 0],
-                0.07 + Math.random() * 0.06
+                (0.07 + Math.random() * 0.06) * profile.alpha
             );
         }
 
         // 银心附近的一团柔光，让河带有明暗重心
         for (let i = 0; i < 7; i += 1) {
             const x = width * (0.34 + Math.random() * 0.34);
-            const y = bandCurve(x) + gaussian() * height * 0.014;
+            const profile = bandProfile(x / width);
+            const y = bandCurve(x) + gaussian() * height * 0.014 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.055 + Math.random() * 0.07),
-                height * (0.012 + Math.random() * 0.014),
+                height * (0.012 + Math.random() * 0.014) * profile.width,
                 (Math.random() - 0.5) * 0.25,
                 pale[(Math.random() * pale.length) | 0],
-                0.006 + Math.random() * 0.006
+                (0.006 + Math.random() * 0.006) * profile.alpha
+            );
+        }
+
+        // 银心的大尺度朦胧光晕，把中央鼓起一块，而不是等宽的带子
+        for (let i = 0; i < 8; i += 1) {
+            const t = 0.44 + Math.random() * 0.12;
+            const x = width * t;
+            const profile = bandProfile(t);
+            const y = bandCurve(x) + gaussian() * height * 0.02 * profile.width;
+            paintCloud(
+                x,
+                y,
+                width * (0.07 + Math.random() * 0.07),
+                height * (0.02 + Math.random() * 0.022) * profile.width,
+                (Math.random() - 0.5) * 0.2,
+                Math.random() < 0.35 ? warm : pale[(Math.random() * pale.length) | 0],
+                (0.009 + Math.random() * 0.009) * profile.alpha
             );
         }
 
@@ -1471,15 +1656,16 @@ const STAR_TINTS = [
         for (let i = 0; i < 7; i += 1) {
             const t = 0.12 + Math.random() * 0.76;
             const x = width * t;
-            const y = bandCurve(x) + gaussian() * height * 0.012;
+            const profile = bandProfile(t);
+            const y = bandCurve(x) + gaussian() * height * 0.012 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.03 + Math.random() * 0.045),
-                height * (0.007 + Math.random() * 0.012),
+                height * (0.007 + Math.random() * 0.012) * profile.width,
                 (Math.random() - 0.5) * 0.3,
                 accent[(Math.random() * accent.length) | 0],
-                0.004 + Math.random() * 0.006
+                (0.004 + Math.random() * 0.006) * profile.alpha
             );
         }
 
@@ -1487,15 +1673,16 @@ const STAR_TINTS = [
         ctx.globalCompositeOperation = "destination-out";
         for (let i = 0; i < 22; i += 1) {
             const x = width * (0.08 + Math.random() * 0.84);
-            const y = bandCurve(x) + (Math.random() - 0.5) * height * 0.02;
+            const profile = bandProfile(x / width);
+            const y = bandCurve(x) + (Math.random() - 0.5) * height * 0.02 * profile.width;
             paintCloud(
                 x,
                 y,
                 width * (0.025 + Math.random() * 0.055),
-                height * (0.0018 + Math.random() * 0.0042),
+                height * (0.0018 + Math.random() * 0.0042) * profile.width,
                 (Math.random() - 0.5) * 0.7,
                 [0, 0, 0],
-                0.32 + Math.random() * 0.26
+                (0.32 + Math.random() * 0.26) * Math.min(profile.alpha, 1.05)
             );
         }
 
@@ -1503,11 +1690,12 @@ const STAR_TINTS = [
         ctx.globalCompositeOperation = "lighter";
         for (let i = 0; i < 1800; i += 1) {
             const x = -width * 0.05 + Math.random() * width * 1.1;
-            const y = bandCurve(x) + gaussian() * height * 0.036;
+            const profile = bandProfile(x / width);
+            const y = bandCurve(x) + gaussian() * height * 0.036 * profile.width;
             const r = Math.random() < 0.012
                 ? 0.5 + Math.random() * 0.55
                 : 0.14 + Math.random() * 0.34;
-            const alpha = 0.03 + Math.pow(Math.random(), 2.0) * 0.3;
+            const alpha = (0.03 + Math.pow(Math.random(), 2.0) * 0.3) * profile.alpha;
             const color = Math.random() < 0.05 ? [255, 236, 210] : [208, 226, 246];
             ctx.fillStyle = rgba(color, alpha);
             ctx.beginPath();
@@ -1518,14 +1706,15 @@ const STAR_TINTS = [
         // 几处星团，让河带的细节更接近真实深空照片
         for (let c = 0; c < 10; c += 1) {
             const cx = width * (0.08 + Math.random() * 0.84);
-            const cy = bandCurve(cx) + gaussian() * height * 0.012;
+            const profile = bandProfile(cx / width);
+            const cy = bandCurve(cx) + gaussian() * height * 0.012 * profile.width;
             const spreadX = width * (0.006 + Math.random() * 0.012);
-            const spreadY = height * (0.004 + Math.random() * 0.007);
+            const spreadY = height * (0.004 + Math.random() * 0.007) * profile.width;
             for (let i = 0; i < 34; i += 1) {
                 const x = cx + gaussian() * spreadX;
                 const y = cy + gaussian() * spreadY;
                 const r = 0.15 + Math.random() * 0.5;
-                const alpha = 0.06 + Math.pow(Math.random(), 1.6) * 0.24;
+                const alpha = (0.06 + Math.pow(Math.random(), 1.6) * 0.24) * profile.alpha;
                 const color = Math.random() < 0.08 ? [255, 236, 210] : [212, 230, 250];
                 ctx.fillStyle = rgba(color, alpha);
                 ctx.beginPath();
@@ -1538,22 +1727,39 @@ const STAR_TINTS = [
         ctx.globalCompositeOperation = "destination-in";
         const fadeX = ctx.createLinearGradient(0, 0, width, 0);
         fadeX.addColorStop(0, "rgba(255, 255, 255, 0)");
-        fadeX.addColorStop(0.16, "rgba(255, 255, 255, 1)");
-        fadeX.addColorStop(0.84, "rgba(255, 255, 255, 1)");
+        fadeX.addColorStop(0.01, "rgba(255, 255, 255, 1)");
+        fadeX.addColorStop(0.99, "rgba(255, 255, 255, 1)");
         fadeX.addColorStop(1, "rgba(255, 255, 255, 0)");
         ctx.fillStyle = fadeX;
         ctx.fillRect(0, 0, width, height);
 
         const fadeY = ctx.createLinearGradient(0, 0, 0, height);
         fadeY.addColorStop(0, "rgba(255, 255, 255, 0)");
-        fadeY.addColorStop(0.2, "rgba(255, 255, 255, 1)");
-        fadeY.addColorStop(0.8, "rgba(255, 255, 255, 1)");
+        fadeY.addColorStop(0.08, "rgba(255, 255, 255, 1)");
+        fadeY.addColorStop(0.92, "rgba(255, 255, 255, 1)");
         fadeY.addColorStop(1, "rgba(255, 255, 255, 0)");
         ctx.fillStyle = fadeY;
         ctx.fillRect(0, 0, width, height);
         ctx.globalCompositeOperation = "source-over";
 
-        return new THREE.CanvasTexture(canvas);
+        // 银河退远：叠加一层大半径的朦胧光晕，再整体轻微柔化。
+        // 去掉星屑和尘埃裂缝的锐利边缘，避免它看起来像贴在眼前的近景层。
+        const softCanvas = document.createElement("canvas");
+        softCanvas.width = width;
+        softCanvas.height = height;
+        const softCtx = softCanvas.getContext("2d");
+        if (typeof softCtx.filter === "string") {
+            softCtx.filter = "blur(18px)";
+            softCtx.globalAlpha = 0.42;
+            softCtx.drawImage(canvas, 0, 0);
+            softCtx.filter = "blur(3.5px)";
+            softCtx.globalAlpha = 1;
+            softCtx.drawImage(canvas, 0, 0);
+        } else {
+            softCtx.drawImage(canvas, 0, 0);
+        }
+
+        return new THREE.CanvasTexture(softCanvas);
     }
 
     function createMeteorField() {
@@ -1582,6 +1788,7 @@ const STAR_TINTS = [
             depthWrite: false,
             toneMapped: false,
         });
+        injectFisheyeShader(lineMaterial, "line");
         const line = new THREE.Line(geometry, lineMaterial);
         line.frustumCulled = false;
         line.visible = false;
@@ -1598,6 +1805,7 @@ const STAR_TINTS = [
             blending: THREE.AdditiveBlending,
             toneMapped: false,
         });
+        injectFisheyeShader(headMaterial, "sprite");
         const head = new THREE.Sprite(headMaterial);
         head.scale.set(8, 8, 1);
         head.visible = false;
@@ -1704,6 +1912,7 @@ const STAR_TINTS = [
             color: 0xffffff,
         });
         occluderMaterial.colorWrite = false;
+        injectFisheyeShader(occluderMaterial, "sprite", 1, moonFisheyeUniforms);
         const occluderSprite = new THREE.Sprite(occluderMaterial);
         occluderSprite.position.set(168, 120, -312);
         occluderSprite.scale.set(60, 60, 1);
@@ -1717,6 +1926,7 @@ const STAR_TINTS = [
             opacity: 0.96,
             color: 0xf2f5f7,
         });
+        injectFisheyeShader(moonMaterial, "sprite", 1, moonFisheyeUniforms);
         const moonSprite = new THREE.Sprite(moonMaterial);
         moonSprite.position.set(168, 120, -312);
         moonSprite.scale.set(58, 58, 1);
@@ -1733,6 +1943,7 @@ const STAR_TINTS = [
             color: 0xdde9f7,
             toneMapped: false,
         });
+        injectFisheyeShader(glowMaterial, "sprite", 1, moonFisheyeUniforms);
         const glowSprite = new THREE.Sprite(glowMaterial);
         glowSprite.position.copy(moonSprite.position);
         glowSprite.scale.set(132, 132, 1);
@@ -1748,6 +1959,7 @@ const STAR_TINTS = [
             color: 0x86abc9,
             toneMapped: false,
         });
+        injectFisheyeShader(auraMaterial, "sprite", 1, moonFisheyeUniforms);
         const auraSprite = new THREE.Sprite(auraMaterial);
         auraSprite.position.copy(moonSprite.position);
         auraSprite.scale.set(190, 190, 1);
@@ -1764,7 +1976,7 @@ const STAR_TINTS = [
     function positionMoon(moon, width, height) {
         const aspect = width / Math.max(height, 1);
         const narrowness = THREE.MathUtils.clamp((1.82 - aspect) / 1.08, 0, 1);
-        const moonX = THREE.MathUtils.lerp(160, 54, narrowness);
+        const moonX = THREE.MathUtils.lerp(160, 38, narrowness);
         const moonY = THREE.MathUtils.lerp(116, 86, narrowness);
         const moonScale = THREE.MathUtils.lerp(58, 46, narrowness);
         const glowScale = THREE.MathUtils.lerp(132, 106, narrowness);
