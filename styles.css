@@ -43,6 +43,11 @@ body {
     top: 0;
     z-index: 10;
     display: inline-flex;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    appearance: none;
+    -webkit-appearance: none;
     opacity: 0;
     transform: translate(-50%, -50%);
     transition: transform 0.18s ease, opacity 0.2s ease;
@@ -154,10 +159,20 @@ body.secret-dragging * {
         inset 0 0 8px rgba(186, 230, 253, 0.08);
     backdrop-filter: blur(20px) saturate(140%);
     -webkit-backdrop-filter: blur(20px) saturate(140%);
-    transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+    transition: opacity 0.28s ease,
+                visibility 0.28s ease,
+                transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
                 box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1),
                 border-color 0.3s ease,
                 background 0.3s ease;
+}
+
+/* 卡片默认隐藏，点击月亮切换显示 */
+.home-grid.is-cards-hidden .card-item {
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(10px) scale(0.96);
 }
 
 /* 鼠标悬停：温润明亮的粉蓝柔光泛起与微升 */

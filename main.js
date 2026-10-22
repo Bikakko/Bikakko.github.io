@@ -1,5 +1,5 @@
 import * as THREE from "./assets/vendor/three.module.min.js";
-import { SITE_CONFIG } from "./config.js";
+import { SITE_CONFIG } from "./config.js?v=glass7";
 
 (function () {
     const sceneHost = document.getElementById("home-scene");
@@ -61,11 +61,6 @@ import { SITE_CONFIG } from "./config.js";
             return;
         }
 
-        secretEntry.href = config.url || "#";
-        secretEntry.target = config.target || "_blank";
-        if (config.target === "_blank") {
-            secretEntry.rel = "noopener noreferrer";
-        }
         if (config.ariaLabel) {
             secretEntry.setAttribute("aria-label", config.ariaLabel);
         }
@@ -168,10 +163,15 @@ import { SITE_CONFIG } from "./config.js";
         });
 
         secretEntry.addEventListener("click", (event) => {
-            if (!secretEntryDragged) return;
             event.preventDefault();
-            event.stopImmediatePropagation();
+            if (secretEntryDragged) return;
+            toggleCards();
         });
+    }
+
+    // 2.2 点击月亮切换左下角卡片的显示状态
+    function toggleCards() {
+        cardsGrid?.classList.toggle("is-cards-hidden");
     }
 
     // 3. 3D 夜空背景场景

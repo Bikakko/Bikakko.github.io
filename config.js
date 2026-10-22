@@ -10,17 +10,13 @@ export const SITE_CONFIG = {
         favicon: "./assets/images/favicon.jpg",
     },
 
-    // 月球上的神秘入口配置
+    // 月亮点击区配置 (点击切换左下角卡片显示)
     secretEntry: {
         enabled: true,
-        // 点击跳转的链接 (可以是您的后台、博客、社交账号等)
-        url: "https://github.com",
-        // 打开方式: "_blank" 新标签页 / "_self" 当前标签页
-        target: "_blank",
         // 图标与加载失败兜底图
         image: "./assets/images/secret-entry.gif",
         fallbackImage: "./assets/images/favicon.jpg",
-        ariaLabel: "Open Secret Entry",
+        ariaLabel: "Toggle card visibility",
     },
 
     // 页面卡片贴图与外链配置 (支持按需增减)
