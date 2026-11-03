@@ -34,6 +34,7 @@
     letter-spacing: 0.05em;
     text-shadow: 0 1px 8px rgba(0, 0, 0, 0.95);
     opacity: 0; transition: opacity 1.4s ease 0.5s;
+    pointer-events: none;
   }
   .hud.on { opacity: 1; }
   .hud .brand {
@@ -102,7 +103,7 @@
   }
 
   /* 行星名称标签：跟着球心投影到屏幕 */
-  .labels { position: fixed; inset: 0; z-index: 3; pointer-events: none; }
+  .labels { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
   .lbl {
     position: absolute; transform: translate(-50%, 0);
     font-size: 11px; letter-spacing: 0.12em; white-space: nowrap;
@@ -114,7 +115,11 @@
     backdrop-filter: blur(3px);
     opacity: 0; transition: opacity 0.5s ease;
   }
-  .lbl.on { opacity: 0.92; }
+  .lbl.on { opacity: 0.92; pointer-events: auto; cursor: pointer; }
+  .lbl.on:hover {
+    color: #fff; border-color: rgba(255, 210, 140, 0.55);
+    background: rgba(30, 24, 14, 0.88);
+  }
   .lbl em {
     font-style: normal; color: #7d8cad;
     font-size: 9px; margin-left: 5px; letter-spacing: 0.05em;
@@ -161,6 +166,7 @@
     <button data-sp="2">2×</button>
     <button data-sp="4">4×</button>
     <button data-sp="8">8×</button>
+    <button data-home title="回到远景全景">全景</button>
   </div>
 </div>
 
@@ -177,9 +183,11 @@
 <div class="tip" id="tip">
   <div><b>左键拖动</b> 环绕观察</div>
   <div><b>右键拖动</b> 平移视角</div>
-  <div><b>滚轮 / 双指</b> 以光标为中心推拉</div>
-  <div><b>点击行星</b> 聚焦</div>
-  <div><b>双击空白</b> 回到全景</div>
+  <div><b>WASD</b> 移动 / 环绕视角</div>
+  <div><b>空格</b> 暂停 / 继续</div>
+  <div><b>滚轮 / 双指</b> 推拉（自由视角对准光标，聚焦时对准天体）</div>
+  <div><b>点击天体 / 标签</b> 聚焦</div>
+  <div><b>双击空白 / 全景</b> 回到远景</div>
 </div>
 
 <div class="labels" id="labels"></div>
@@ -462,8 +470,8 @@ sunGroup.add(corona1, corona2, corona3);
 sunGroup.renderOrder = -1;
 scene.add(sunGroup);
 
-// 太阳旁边的体光源（给行星打光）
-const sunLight = new THREE.PointLight(0xfff0d0, 4200, 0, 1.6);
+// 太阳旁边的体光源（只给标准材质的月球打光；行星使用自定义 shader）
+const sunLight = new THREE.PointLight(0xfff0d0, 120, 0, 2);
 sunLight.position.set(0, 0, 0);
 scene.add(sunLight);
 
@@ -560,6 +568,21 @@ for (const cfg of PLANETS) {
   cfg.tilt = cfg.tiltDeg * DEG;
   cfg.mAnomalyBias = 0;
 }
+
+// 地月卫星：位置由 Earth 的 moonPivot 驱动，这份数据用于聚焦、信息卡与光点
+const MOON_CFG = {
+  name: "月球", type: "卫星",
+  radiusKm: 1737.4,
+  aAU: 384400 / 149597870.7,
+  e: 0.0549, incDeg: 5.145,
+  nodeDeg: 0, varpiDeg: 0, meanLonDeg: 0,
+  tiltDeg: 6.68, moons: 0, spinHours: 655.7, orbitDays: 27.321661,
+  colorA: 0xb8b4ac, colorB: 0x8a8782, colorC: 0xe0ddd6,
+  noiseFreq: 6.0, bandAmp: 0.0, roughness: 1.0,
+  desc: "384,400 km",
+};
+MOON_CFG.radius = kmToUnit(MOON_CFG.radiusKm);
+MOON_CFG.tilt = MOON_CFG.tiltDeg * DEG;
 
 /* ============================================================
    5. 行星材质：程序化表面
@@ -666,6 +689,7 @@ function makePlanetMaterial(cfg) {
    ============================================================ */
 const planets = [];
 const clickable = [];
+let moonMesh = null, moonDot = null;
 
 // 轨道平面：真实倾角，不再做视觉放大。
 // 轨道要素取 J2000 历元，位置由开普勒方程解出，
@@ -735,9 +759,9 @@ function makeMinDot(cfg) {
   const grad = g.createRadialGradient(32, 32, 0, 32, 32, 32);
   const c = new THREE.Color(cfg.colorA);
   const rgb = `${Math.round(c.r*255)},${Math.round(c.g*255)},${Math.round(c.b*255)}`;
-  grad.addColorStop(0.00, `rgba(255,255,255,0.95)`);
-  grad.addColorStop(0.28, `rgba(${rgb},0.95)`);
-  grad.addColorStop(0.62, `rgba(${rgb},0.35)`);
+  grad.addColorStop(0.00, `rgba(255,255,255,0.70)`);
+  grad.addColorStop(0.28, `rgba(${rgb},0.75)`);
+  grad.addColorStop(0.62, `rgba(${rgb},0.25)`);
   grad.addColorStop(1.00, `rgba(${rgb},0)`);
   g.fillStyle = grad;
   g.fillRect(0, 0, 64, 64);
@@ -761,7 +785,7 @@ function makeMinDot(cfg) {
 // 太阳的屏幕空间指示点：真实半径在全景下不足 0.1px，属于 UI 层，
 // 与行星光点同一套逻辑，不参与比例计算。
 const sunDot = makeMinDot({ colorA: 0xffd9a0 });
-sunDot.material.size = 16;
+sunDot.material.size = 12;
 sunGroup.add(sunDot);
 
 for (const cfg of PLANETS) {
@@ -857,12 +881,20 @@ for (const cfg of PLANETS) {
     group.add(moonPlane);
 
     moonPivot = new THREE.Group();
-    const moonGeo = new THREE.SphereGeometry(kmToUnit(1737.4), 24, 18);
+    const moonGeo = new THREE.SphereGeometry(MOON_CFG.radius, 24, 18);
     const moonMat = new THREE.MeshStandardMaterial({
-      color: 0xb8b4ac, roughness: 1.0, metalness: 0,
+      color: MOON_CFG.colorA, roughness: 1.0, metalness: 0,
     });
     const moon = new THREE.Mesh(moonGeo, moonMat);
     moon.position.x = 384400 / KM_PER_UNIT;
+    moon.userData = MOON_CFG;
+    moonMesh = moon;
+
+    moonDot = makeMinDot(MOON_CFG);
+    moonDot.material.size = 9;
+    moon.add(moonDot);
+    clickable.push(moon, moonDot);
+
     moonPivot.add(moon);
     moonPlane.add(moonPivot);
   }
@@ -880,13 +912,21 @@ for (const cfg of PLANETS) {
   clickable.push(mesh, dot);
 }
 
+// 可聚焦对象：八颗行星 + 地球的月球
+const focusables = planets.map(p => ({ cfg: p.cfg, group: p.group }));
+if (moonMesh) focusables.push({ cfg: MOON_CFG, group: moonMesh });
+
 /* ============================================================
    7. 轨道相机（自实现，无 OrbitControls）
    ============================================================ */
+// 「全景」默认视角；?az / ?el 可覆盖，方便截图
+const HOME_THETA = qAz !== null ? qAz * Math.PI / 180 : Math.PI * 0.22;
+const HOME_PHI   = qEl !== null ? qEl * Math.PI / 180 : Math.PI * 0.30;
+
 const orbit = {
   // phi 从「竖直向上」量起：0 = 正上方俯视，PI/2 = 水平
-  theta: qAz !== null ? qAz * Math.PI / 180 : Math.PI * 0.22,
-  phi: qEl !== null ? qEl * Math.PI / 180 : Math.PI * 0.30,
+  theta: HOME_THETA,
+  phi: HOME_PHI,
   dist: qDist !== null ? qDist : 400,
   tTheta: 0, tPhi: 0, tDist: 0,
   target: new THREE.Vector3(0, 0, 0),
@@ -915,7 +955,8 @@ function fitDistance() {
 
 // 关键：上限卡在水平面之前，永远不钻到轨道面下方
 const MIN_PHI = 0.10, MAX_PHI = Math.PI * 0.495;
-const PANORAMA_MIN_DIST = 0.6;
+// 自由视角下限：贴到太阳半径附近即可，不再用与尺度无关的 0.6
+const PANORAMA_MIN_DIST = 0.05;
 let MAX_DIST = 1200;
 
 // 没显式指定 dist 时，用视口自适应距离
@@ -969,6 +1010,13 @@ function zoomTowardCursor(newDist, clientX, clientY) {
   const d0 = orbit.dist;
   const d1 = Math.min(MAX_DIST, Math.max(minDistance(), newDist));
   if (!(d0 > 0) || !Number.isFinite(d1)) return;
+
+  // 聚焦时忽略光标偏移，但仍保留 WASD/右键平移后的当前位置
+  if (focusTarget) {
+    orbit.tDist = d1;
+    return;
+  }
+
   if (Math.abs(d1 - d0) < d0 * 1e-6) {
     orbit.dist = orbit.tDist = d1;
     return;
@@ -984,7 +1032,9 @@ function zoomTowardCursor(newDist, clientX, clientY) {
   _zoomUp.setFromMatrixColumn(camera.matrixWorld, 1).normalize();
   _zoomOffset.copy(_zoomRight).multiplyScalar(ndcX * halfW)
     .addScaledVector(_zoomUp, ndcY * halfH);
-  _zoomShift.copy(_zoomOffset).multiplyScalar(1 - d1 / d0);
+  // 对极端距离比做钳制，避免刚复位等瞬态把 target 甩飞
+  const ratio = Math.min(4, Math.max(0.25, d1 / d0));
+  _zoomShift.copy(_zoomOffset).multiplyScalar(1 - ratio);
 
   orbit.target.add(_zoomShift);
   orbit.panOffset.add(_zoomShift);
@@ -1002,6 +1052,7 @@ canvas.addEventListener("pointerdown", (e) => {
   lastX = e.clientX; lastY = e.clientY;
   try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
   document.documentElement.classList.add("dragging");
+  // 冻结当前朝向，避免残余缓动在拖动过程中改变视角；不重置 WASD/平移位置
   orbit.tTheta = orbit.theta;
   orbit.tPhi = orbit.phi;
 });
@@ -1034,19 +1085,24 @@ function endDrag(e) {
 canvas.addEventListener("pointerup", endDrag);
 canvas.addEventListener("pointercancel", endDrag);
 
-canvas.addEventListener("wheel", (e) => {
+function handleWheel(e) {
   e.preventDefault();
   // 指数式缩放：每格固定「乘一个倍率」，远近手感一致。
   // 原来的线性加法在 dist=400 时一格只动 8 单位（2%），所以推半天没反应。
   const step = Math.min(Math.abs(e.deltaY) / 100, 3);      // 归一化到「格」
   // 向前滚（deltaY < 0）＝ 拉近（距离变小），向后滚 ＝ 拉远
   const zoom = Math.exp(Math.sign(e.deltaY) * step * 0.22);  // 每格 ≈ 1.25 倍
+
+  // 滚轮不再自动猜目标：内圈光点重叠时会锁错行星。
+  // 聚焦天体请点击或滚轮经过名称标签。
+
   // 冻结当前朝向，避免残余缓动在缩放过程中改变视角
   orbit.tTheta = orbit.theta;
   orbit.tPhi = orbit.phi;
   // 以鼠标箭头为不动点推拉，而不是始终对准屏幕中心
   zoomTowardCursor(orbit.tDist * zoom, e.clientX, e.clientY);
-}, { passive: false });
+}
+canvas.addEventListener("wheel", handleWheel, { passive: false });
 
 /* ---------- 触摸：手写 touch，防 pointer 被吞 ---------- */
 let pinchStart = 0, pinchDist = 0;
@@ -1108,10 +1164,10 @@ const raycaster = new THREE.Raycaster();
 const ndc = new THREE.Vector2();
 let focusTarget = null;
 
-// 缩放下限：聚焦时允许贴近球面（1.25 倍半径），全景时保留原手感
+// 缩放下限：聚焦时允许贴近球面（1.02 倍半径），全景时保留原手感
 function minDistance() {
   return focusTarget
-    ? Math.max(focusTarget.cfg.radius * 1.25, 1e-5)
+    ? Math.max(focusTarget.cfg.radius * 1.02, 1e-5)
     : PANORAMA_MIN_DIST;
 }
 
@@ -1139,7 +1195,7 @@ function focusOn(cfg, group) {
   // 相机方位：从「行星→太阳」的水平方向偏 40°，再抬高 35°。
   // 不能 normalize 后硬塞 camDir.y——水平分量会被压没，
   // 相机就跑到行星正上方垂直俯视，只能看到一个点。
-  const sunDir = new THREE.Vector3().negate(wp);
+  const sunDir = wp.clone().negate();
   const flat = new THREE.Vector3(sunDir.x, 0, sunDir.z).normalize();
   const side = new THREE.Vector3(-flat.z, 0, flat.x);
   const az = flat.clone().multiplyScalar(Math.cos(0.7))
@@ -1165,10 +1221,12 @@ function focusOn(cfg, group) {
   showInfo(cfg);
 }
 
-function clearFocus() {
+function resetView() {
   focusTarget = null;
-  orbit.panOffset.set(0, 0, 0);   // 双击回到全景，顺便归位
+  orbit.panOffset.set(0, 0, 0);
   orbit.tDist = fitDistance();
+  orbit.tTheta = HOME_THETA;
+  orbit.tPhi = HOME_PHI;
   infoEl.classList.remove("on");
 }
 
@@ -1177,19 +1235,23 @@ canvas.addEventListener("click", (e) => {
   if (e.button !== 0) return; // 右键不聚焦
   const hit = pickPlanet(e.clientX, e.clientY);
   if (!hit) return;
-  // 行星本体和最小光点的 userData 都是同一个 cfg，直接回查轨道节点
-  const holder = planets.find(p => p.cfg === hit.userData);
-  if (holder) focusOn(hit.userData, holder.group);
+  // 行星/卫星本体和最小光点的 userData 都是同一个 cfg，回查聚焦对象
+  const holder = focusables.find(f => f.cfg === hit.userData);
+  if (holder) focusOn(holder.cfg, holder.group);
 });
 
-canvas.addEventListener("dblclick", () => clearFocus());
+canvas.addEventListener("dblclick", (e) => {
+  // 双击天体只聚焦，不回到远景
+  if (pickPlanet(e.clientX, e.clientY)) return;
+  resetView();
+});
 
 /* ---------- 信息卡 ---------- */
 const infoEl = document.getElementById("info");
 function showInfo(cfg) {
   document.getElementById("infoName").textContent = cfg.name;
   document.getElementById("infoType").textContent = cfg.type;
-  document.getElementById("infoDist").textContent = `${cfg.aAU.toFixed(3)} AU`;
+  document.getElementById("infoDist").textContent = cfg.desc || `${cfg.aAU.toFixed(3)} AU`;
   document.getElementById("infoEcc").textContent = cfg.e.toFixed(4);
   document.getElementById("infoPeriod").textContent = cfg.orbitDays >= 365.25
     ? `${(cfg.orbitDays / 365.25).toFixed(2)} 年`
@@ -1199,7 +1261,41 @@ function showInfo(cfg) {
   infoEl.classList.add("on");
 }
 
+/* ---------- WASD 平移视角 ---------- */
+const moveKeys = new Set();
+const _moveFwd = new THREE.Vector3();
+const _moveRight = new THREE.Vector3();
+const _moveStep = new THREE.Vector3();
+
+function updateKeyboardMove(dt) {
+  const f = (moveKeys.has("KeyW") ? 1 : 0) - (moveKeys.has("KeyS") ? 1 : 0);
+  const r = (moveKeys.has("KeyD") ? 1 : 0) - (moveKeys.has("KeyA") ? 1 : 0);
+  if (!f && !r) return;
+
+  // 近距离聚焦时改为环绕天体：既不会把相机推进球体，也始终对准星球
+  if (focusTarget && orbit.dist < focusTarget.cfg.radius * 30) {
+    orbit.tTheta -= r * 1.0 * dt;
+    orbit.tPhi = Math.min(MAX_PHI, Math.max(MIN_PHI, orbit.tPhi - f * 0.6 * dt));
+    return;
+  }
+
+  // 远距离/自由视角：沿当前视角水平前向/右向平移目标点
+  _moveFwd.set(-Math.sin(orbit.theta), 0, -Math.cos(orbit.theta));
+  _moveRight.set(Math.cos(orbit.theta), 0, -Math.sin(orbit.theta));
+  _moveStep.set(0, 0, 0).addScaledVector(_moveFwd, f).addScaledVector(_moveRight, r);
+  if (_moveStep.lengthSq() === 0) return;
+  // 自由视角下给一个场景尺度下限，避免缩到 0.6 时 WASD 慢到像失效
+  const ref = focusTarget ? orbit.dist : Math.max(orbit.dist, 5);
+  const speed = ref * 0.6;
+  _moveStep.normalize().multiplyScalar(speed * dt);
+
+  orbit.panOffset.add(_moveStep);
+  orbit.target.add(_moveStep);
+}
+
 function updateCamera(dt) {
+  updateKeyboardMove(dt);
+
   // 目标点 = 基准位置（焦点行星或原点） + 右键平移偏移
   const base = new THREE.Vector3(0, 0, 0);
   if (focusTarget) {
@@ -1208,12 +1304,30 @@ function updateCamera(dt) {
   base.add(orbit.panOffset);
 
   const k2 = 1 - Math.pow(0.002, dt);
-  orbit.target.lerp(base, k2);
+  // 聚焦且已拉近时目标必须严格跟随行星：近距离下插值滞后会让行星跑出画面
+  if (focusTarget && orbit.dist < 20) {
+    orbit.target.copy(base);
+  } else {
+    orbit.target.lerp(base, k2);
+  }
 
   const k = 1 - Math.pow(0.0009, dt);
   orbit.theta += (orbit.tTheta - orbit.theta) * k;
   orbit.phi   += (orbit.tPhi   - orbit.phi)   * k;
   orbit.dist  += (orbit.tDist  - orbit.dist)  * k;
+
+  // 贴近观察时自动暂停，避免相机/天体缓慢漂移；焦点和自由视角都适用
+  if (!qStatic) {
+    const close = orbit.dist < (focusTarget ? Math.max(focusTarget.cfg.radius * 3, 1.0) : 1.0);
+    const far = orbit.dist > (focusTarget ? Math.max(focusTarget.cfg.radius * 4, 1.5) : 1.5);
+    if (!autoPaused && !paused && close) {
+      autoPaused = true;
+      setPaused(true);
+    } else if (autoPaused && far) {
+      autoPaused = false;
+      if (paused) setPaused(false);
+    }
+  }
 
   const sp = Math.sin(orbit.phi), cp = Math.cos(orbit.phi);
   camera.position.set(
@@ -1235,18 +1349,60 @@ function updateCamera(dt) {
 /* ---------- 行星标签：3D 位置投影到屏幕 ---------- */
 const labelsEl = document.getElementById("labels");
 const labelItems = [];
+// 标签可点击聚焦；滚轮经过标签时也保持缩放
+labelsEl.addEventListener("wheel", handleWheel, { passive: false });
 
 (function buildLabels() {
   for (const p of planets) {
     const el = document.createElement("div");
     el.className = "lbl";
     el.innerHTML = `${p.cfg.name}<em>${p.cfg.aAU.toFixed(2)} AU</em>`;
+    el.title = `聚焦到${p.cfg.name}`;
+    el.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      focusOn(p.cfg, p.group);
+    });
+    el.addEventListener("wheel", (ev) => {
+      if (ev.deltaY < 0 && !focusTarget) {
+        ev.preventDefault();
+        ev.stopPropagation();
+        focusOn(p.cfg, p.group);
+        return;
+      }
+      handleWheel(ev);
+      ev.stopPropagation();
+    }, { passive: false });
     labelsEl.appendChild(el);
     labelItems.push({ el, p });
   }
 })();
 
+// 月球标签：与地球在屏幕上分开到一定距离后才显示，避免全景下重叠
+if (moonMesh) {
+  const el = document.createElement("div");
+  el.className = "lbl";
+  el.innerHTML = `月球<em>384,400 km</em>`;
+  el.title = "聚焦到月球";
+  el.addEventListener("click", (ev) => {
+    ev.stopPropagation();
+    focusOn(MOON_CFG, moonMesh);
+  });
+  el.addEventListener("wheel", (ev) => {
+    if (ev.deltaY < 0 && !focusTarget) {
+      ev.preventDefault();
+      ev.stopPropagation();
+      focusOn(MOON_CFG, moonMesh);
+      return;
+    }
+    handleWheel(ev);
+    ev.stopPropagation();
+  }, { passive: false });
+  labelsEl.appendChild(el);
+  labelItems.push({ el, p: { cfg: MOON_CFG, group: moonMesh } });
+}
+
 const projV = new THREE.Vector3();
+const _earthProjV = new THREE.Vector3();
 const PLANET_INDEX = new Map(planets.map((p, i) => [p.cfg.name, i]));
 
 // 标签整体布局：先收集所有投影点，再做一次简单的斥力推开，
@@ -1262,6 +1418,9 @@ function updateLabels() {
   const sunS = new THREE.Vector3(0, 0, 0).project(camera);
   const sunX = (sunS.x * halfW) + halfW;
   const sunY = (-sunS.y * halfH) + halfH;
+  // 太阳在相机背后/画面外时不要参与推离，否则投影会退化到错误坐标
+  const sunVisible = sunS.z > -1 && sunS.z < 1
+    && Math.abs(sunS.x) < 1.2 && Math.abs(sunS.y) < 1.2;
   // 太阳本体在全景下不可见，按 UI 指示点的 9px 半径避让
   const sunPx = Math.max(9,
     (SUN_RADIUS / (camera.position.length() * Math.tan(camera.fov * Math.PI / 360))) * halfH);
@@ -1270,11 +1429,15 @@ function updateLabels() {
 
   for (const { el, p } of labelItems) {
     p.group.getWorldPosition(projV);
+    // 先取世界距离再投影；卫星的 group 有父级变换，不能用 group.position
+    const worldDist = camera.position.distanceTo(projV);
     projV.project(camera);
 
     const onScreen = projV.z < 1 && Math.abs(projV.x) < 1.2 && Math.abs(projV.y) < 1.2;
-    const dist = camera.position.distanceTo(p.group.position);
-    if (!onScreen || dist > orbit.dist * 1.8) {
+    const dist = worldDist;
+    // 自由视角近距离时不要隐藏远处但仍在画面里的标签，否则只剩无法点击的光点
+    const hideDist = focusTarget ? orbit.dist * 1.8 : Math.max(orbit.dist * 1.8, 200);
+    if (!onScreen || dist > hideDist) {
       el.classList.remove("on");
       _labSmooth.delete(el);   // 再出现时直接落到新位置，不从旧位置滑过来
       continue;
@@ -1286,8 +1449,26 @@ function updateLabels() {
     const sx = (projV.x * halfW) + halfW;
     const sy = (-projV.y * halfH) + halfH;
 
+    // 月球标签只在和地球屏幕位置分开时显示，否则会与地球标签叠在一起
+    if (p.cfg === MOON_CFG) {
+      const earth = planets.find(x => x.cfg.name === "地球");
+      if (earth) {
+        earth.group.getWorldPosition(_earthProjV);
+        _earthProjV.project(camera);
+        const eOn = _earthProjV.z > -1 && _earthProjV.z < 1
+          && Math.abs(_earthProjV.x) < 1.2 && Math.abs(_earthProjV.y) < 1.2;
+        const ex = (_earthProjV.x * halfW) + halfW;
+        const ey = (-_earthProjV.y * halfH) + halfH;
+        if (eOn && Math.hypot(sx - ex, sy - ey) < 24) {
+          el.classList.remove("on");
+          _labSmooth.delete(el);
+          continue;
+        }
+      }
+    }
+
     // 标签放在行星圆面下方；聚焦大天体时不再被固定上限压回球面
-    const rPx = (p.cfg.radius / (camera.position.distanceTo(p.group.position)
+    const rPx = (p.cfg.radius / (worldDist
       * Math.tan(camera.fov * Math.PI / 360))) * halfH;
     const sxOut = sx;
     const syOut = Math.min(sy + rPx + 10, innerHeight - 26);
@@ -1321,21 +1502,23 @@ function updateLabels() {
 
   // 太阳推离：只做一次，并且是「补足差值」而不是硬吸附到圆周上。
   // 硬吸附在方向退化（ds→0）时会让标签从太阳一边瞬移到另一边。
-  for (const it of items) {
-    const dx = it.x - sunX, dy = it.y - sunY;
-    const ds = Math.hypot(dx, dy);
-    const minR = sunPx + it.w / 2 + 8;
-    if (ds < minR) {
-      let ux, uy;
-      if (ds < 0.5) {
-        uy = dy === 0 && dx === 0 ? 1 : (dy >= 0 ? 1 : -1);   // 方向退化：固定朝下
-        ux = 0;
-      } else {
-        ux = dx / ds; uy = dy / ds;
+  if (sunVisible) {
+    for (const it of items) {
+      const dx = it.x - sunX, dy = it.y - sunY;
+      const ds = Math.hypot(dx, dy);
+      const minR = sunPx + it.w / 2 + 8;
+      if (ds < minR) {
+        let ux, uy;
+        if (ds < 0.5) {
+          uy = dy === 0 && dx === 0 ? 1 : (dy >= 0 ? 1 : -1);   // 方向退化：固定朝下
+          ux = 0;
+        } else {
+          ux = dx / ds; uy = dy / ds;
+        }
+        const push = minR - ds;        // 连续，ds=minR 时 push=0，不会跳
+        it.x += ux * push;
+        it.y += uy * push;
       }
-      const push = minR - ds;        // 连续，ds=minR 时 push=0，不会跳
-      it.x += ux * push;
-      it.y += uy * push;
     }
   }
 
@@ -1384,6 +1567,7 @@ let prevMs = performance.now();
 let simTime = qT;
 let speedMul = 1.0;
 let paused = false;
+let autoPaused = false;
 // 每真实秒推进多少「天」：0.5 天 = 12 小时（1× 默认速度）
 const DAYS_PER_SEC = 0.5;
 let fpsAcc = 0, frames = 0;
@@ -1392,24 +1576,35 @@ const timeEl = document.getElementById("simtime");
 const speedEl = document.getElementById("speed");
 
 // 键盘调速度
-function applySpeed(v) {
-  if (v === 0) {
-    paused = !paused;          // 再点一次继续
-  } else {
-    paused = false;
-    speedMul = v;
-  }
+function renderSpeed() {
   const label = speedMul.toFixed(2).replace(/\.?0+$/, "");
   speedEl.textContent = label + "×" + (paused ? " ⏸" : "");
   for (const b of document.querySelectorAll(".ctrl button")) {
+    if (b.dataset.sp === undefined) continue;
     const bv = parseFloat(b.dataset.sp);
-    b.classList.toggle("on", v === 0 ? (paused && bv === 0) : (!paused && bv === v));
+    b.classList.toggle("on", paused ? bv === 0 : bv === speedMul);
+  }
+}
+function setPaused(v) {
+  paused = v;
+  renderSpeed();
+}
+function applySpeed(v) {
+  if (v === 0) {
+    setPaused(!paused);          // 再点一次继续
+  } else {
+    speedMul = v;
+    setPaused(false);
   }
 }
 
 document.querySelectorAll(".ctrl button").forEach(b => {
   b.addEventListener("click", (e) => {
     e.stopPropagation();
+    if (b.dataset.home !== undefined) {
+      resetView();
+      return;
+    }
     applySpeed(parseFloat(b.dataset.sp));
   });
 });
@@ -1417,8 +1612,18 @@ document.querySelectorAll(".ctrl button").forEach(b => {
 addEventListener("keydown", (e) => {
   if (e.code === "ArrowUp")   applySpeed(Math.min(8, speedMul * 2));
   if (e.code === "ArrowDown") applySpeed(Math.max(0.25, speedMul / 2));
-  if (e.code === "Space")     { e.preventDefault(); applySpeed(speedMul); }
+  if (e.code === "Space")     { e.preventDefault(); applySpeed(0); }
 });
+
+addEventListener("keydown", (e) => {
+  if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if (e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") {
+    moveKeys.add(e.code);
+    e.preventDefault();
+  }
+});
+addEventListener("keyup", (e) => moveKeys.delete(e.code));
+addEventListener("blur", () => moveKeys.clear());
 
 const tmpV = new THREE.Vector3();
 
@@ -1481,6 +1686,53 @@ if (Q.get("debug") === "1") {
     project(world) {
       const v = new THREE.Vector3(world[0], world[1], world[2]).project(camera);
       return { x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight, z: v.z };
+    },
+    screenOf(name) {
+      const p = planets.find(x => x.cfg.name === name);
+      if (!p) return null;
+      const v = new THREE.Vector3();
+      p.group.getWorldPosition(v);
+      v.project(camera);
+      return { x: (v.x * 0.5 + 0.5) * innerWidth, y: (-v.y * 0.5 + 0.5) * innerHeight };
+    },
+    worldOf(name) {
+      const p = planets.find(x => x.cfg.name === name);
+      if (!p) return null;
+      const v = new THREE.Vector3();
+      p.group.getWorldPosition(v);
+      return v.toArray();
+    },
+    labelProbe(name) {
+      const p = planets.find(x => x.cfg.name === name);
+      if (!p) return null;
+      const v = new THREE.Vector3();
+      p.group.getWorldPosition(v);
+      v.project(camera);
+      const halfW = innerWidth / 2, halfH = innerHeight / 2;
+      const sx = (v.x * halfW) + halfW;
+      const sy = (-v.y * halfH) + halfH;
+      const dist = camera.position.distanceTo(p.group.position);
+      const rPx = (p.cfg.radius / (dist * Math.tan(camera.fov * Math.PI / 360))) * halfH;
+      const sun = new THREE.Vector3(0, 0, 0).project(camera);
+      return {
+        sx: +sx.toFixed(3), sy: +sy.toFixed(3), dist: +dist.toFixed(9), rPx: +rPx.toFixed(3),
+        syOut: +Math.min(sy + rPx + 10, innerHeight - 26).toFixed(3),
+        sun: {
+          x: +((sun.x * halfW) + halfW).toFixed(3),
+          y: +((-sun.y * halfH) + halfH).toFixed(3),
+          z: +sun.z.toFixed(6),
+        },
+      };
+    },
+    get focusName() { return focusTarget ? focusTarget.cfg.name : null; },
+    view() {
+      return {
+        theta: +orbit.theta.toFixed(9), phi: +orbit.phi.toFixed(9),
+        dist: +orbit.dist.toFixed(9), tDist: +orbit.tDist.toFixed(9),
+        target: orbit.target.toArray().map(v => +v.toFixed(9)),
+        panOffset: orbit.panOffset.toArray().map(v => +v.toFixed(12)),
+        focus: focusTarget ? focusTarget.cfg.name : null,
+      };
     },
     get scale() {
       return { auUnit: AU_UNIT, kmPerUnit: KM_PER_UNIT, radiusScale: RADIUS_SCALE };
@@ -1570,8 +1822,9 @@ function animate() {
       const dPx = (cfg.radius * 2) / (camDist * Math.tan(camera.fov * Math.PI / 360)) * (innerHeight / 2);
       // 6px 以下 → 完全显示；12px 以上 → 完全关闭
       const fade = Math.min(1, Math.max(0, (12 - dPx) / 6));
-      p.dot.material.opacity = fade * 0.95;
-      p.dot.material.size = Math.max(7, Math.min(16, 26 - dPx));
+      p.dot.material.opacity = fade * 0.55;
+      // 随真实球体变大逐渐缩小，给拉近过程一个连续的视觉反馈
+      p.dot.material.size = Math.max(5, Math.min(11, 11 - dPx * 0.6));
       p.dot.visible = fade > 0.02;
     }
 
@@ -1583,18 +1836,29 @@ function animate() {
     const sunPx = (SUN_RADIUS * 2) / (camera.position.length()
       * Math.tan(camera.fov * Math.PI / 360)) * (innerHeight / 2);
     const fade = Math.min(1, Math.max(0, (12 - sunPx) / 6));
-    sunDot.material.opacity = fade * 0.95;
-    sunDot.material.size = Math.max(9, Math.min(18, 26 - sunPx));
+    sunDot.material.opacity = fade * 0.62;
+    sunDot.material.size = Math.max(7, Math.min(13, 13 - sunPx * 0.5));
     sunDot.visible = fade > 0.02;
+  }
+
+  // 月球指示点：球体仍是亚像素大小时显示
+  if (moonMesh && moonDot) {
+    moonMesh.getWorldPosition(tmpV);
+    const camDist = camera.position.distanceTo(tmpV);
+    const dPx = (MOON_CFG.radius * 2) / (camDist * Math.tan(camera.fov * Math.PI / 360)) * (innerHeight / 2);
+    const fade = Math.min(1, Math.max(0, (12 - dPx) / 6));
+    moonDot.material.opacity = fade * 0.5;
+    moonDot.material.size = Math.max(4, Math.min(9, 9 - dPx * 0.5));
+    moonDot.visible = fade > 0.02;
   }
 
   // 星空闪烁
   stars.uniforms.uTime.value = t;
 
-  updateLabels();
-
   updateCamera(dt);
   renderer.render(scene, camera);
+  // 用本帧的相机矩阵投影标签，避免近距离聚焦时滞后一帧
+  updateLabels();
 
 
   frames++; fpsAcc += dt;
@@ -1640,7 +1904,7 @@ if (qFocus) {
     const d = Math.max(p.cfg.radius / (0.2 * Math.tan(camera.fov * Math.PI / 360)), p.cfg.radius * 2.2);
 
     // 相机放在「行星→太阳」方向偏 40° 的那一侧：看得见亮面，又不是正对直射
-    const sunDir = new THREE.Vector3().negate(tmpV);
+    const sunDir = tmpV.clone().negate();
     const flat = new THREE.Vector3(sunDir.x, 0, sunDir.z).normalize();
     const side = new THREE.Vector3(-flat.z, 0, flat.x);
     const az = flat.clone().multiplyScalar(Math.cos(0.7))
