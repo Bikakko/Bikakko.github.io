@@ -144,6 +144,11 @@
   }
   .loader.done { opacity: 0; pointer-events: none; }
 
+  .static .hud, .static .tip, .static .info, .static .lbl, .static .loader {
+    transition: none !important;
+  }
+  .static #fpsRow { display: none; }
+
   /* 小屏收一收字号，避免挡住行星 */
   @media (max-width: 560px) {
     .hud { left: 14px; top: 12px; font-size: 11px; }
@@ -163,7 +168,7 @@
   <div class="sub">程序生成太阳系 · 尺寸与轨道等比例 · J2000 轨道要素</div>
   <div class="row">时间 <span class="val" id="simtime">—</span></div>
   <div class="row">速度 <span class="val" id="speed">1×</span></div>
-  <div class="row">帧率 <span class="val" id="fps">—</span></div>
+  <div class="row" id="fpsRow">帧率 <span class="val" id="fps">—</span></div>
   <div class="ctrl">
     <button data-sp="0" title="暂停">❚❚</button>
     <button data-sp="0.25">¼×</button>

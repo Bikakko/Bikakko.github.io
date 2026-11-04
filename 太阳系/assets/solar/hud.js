@@ -122,21 +122,26 @@ export function createHud({ onHome }) {
     if (!qStatic && !pausedNow()) simTime += dt * speedMul * DAYS_PER_SEC;
   }
 
+  function renderTime() {
+    const absDays = Math.abs(simTime);
+    const days = Math.floor(absDays);
+    const hours = Math.floor((absDays - days) * 24);
+    timeEl.textContent = `J2000 ${simTime < 0 ? "−" : "+"} ${days} 天 ${String(hours).padStart(2, "0")}h`;
+  }
+
   // rawDt：未被 0.25s 上限钳制的真实帧间隔，FPS 才有诊断意义
   function updateHud(rawDt) {
+    if (qStatic) return;
     frames++; fpsAcc += rawDt;
     if (fpsAcc >= 0.5) {
       fpsEl.textContent = Math.round(frames / fpsAcc);
-      // simTime 以 J2000 为 0；天数带小时，慢速时也能看出在走
-      const absDays = Math.abs(simTime);
-      const days = Math.floor(absDays);
-      const hours = Math.floor((absDays - days) * 24);
-      timeEl.textContent = `J2000 ${simTime < 0 ? "−" : "+"} ${days} 天 ${String(hours).padStart(2, "0")}h`;
+      renderTime();
       frames = 0; fpsAcc = 0;
     }
   }
 
-  renderSpeed();   // 首屏把当前倍速按钮高亮出来
+  renderSpeed();
+  renderTime();
 
   return {
     showInfo, hideInfo, autoPauseCheck,

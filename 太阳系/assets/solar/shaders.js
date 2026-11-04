@@ -79,11 +79,13 @@ export function makePlanetMaterial(cfg) {
         // 基础噪声
         float n = fbm3(p * uFreq + 13.0, 5);
 
-        // 条带（气态行星用）：沿 y 轴切水平带
-        float lat = p.y;
-        float bandN = fbm3(vec3(p.x * uFreq * 0.7, lat * uFreq * 2.6, p.z * uFreq * 0.7) + 3.0, 5);
-        float bands = sin(lat * 22.0 + bandN * 5.5) * 0.5 + 0.5;
-        bands = mix(n, bands, uBandAmp * 0.75);
+        float bands = n;
+        if (uBandAmp > 0.0) {
+          float lat = p.y;
+          float bandN = fbm3(vec3(p.x * uFreq * 0.7, lat * uFreq * 2.6, p.z * uFreq * 0.7) + 3.0, 5);
+          float bandWave = sin(lat * 22.0 + bandN * 5.5) * 0.5 + 0.5;
+          bands = mix(n, bandWave, uBandAmp * 0.75);
+        }
 
         vec3 col = mix(uColorB, uColorA, smoothstep(0.32, 0.68, bands));
         col = mix(col, uColorC, smoothstep(0.70, 0.92, bands) * 0.65);

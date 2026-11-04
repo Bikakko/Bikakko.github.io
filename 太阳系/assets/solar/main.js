@@ -1,7 +1,7 @@
 /* ============================================================
    太阳系 · Solar · 入口
    - 行星表面：着色器程序化噪声，不加载任何贴图
-   - 轨道相机：自实现，限制在水平面以上
+   - 轨道相机：自实现，远景限制在黄道面上方
    - 触屏：touch-action + 手写 touch 事件
    ============================================================ */
 import * as THREE from "three";
@@ -14,9 +14,10 @@ import { createCameraRig } from "./camera.js";
 import { createLabels } from "./labels.js";
 
 // 构建标记：刷新后可在控制台确认运行的是哪一版
-const BUILD = "2026-11-04 · zoom-anchor-keep";
+const BUILD = "2026-11-05 · unified-input-static";
 console.info("[solar] build " + BUILD);
 window.__solarBuild = BUILD;
+if (qStatic) document.documentElement.classList.add("static");
 
 const canvas = document.getElementById("c");
 const renderer = new THREE.WebGLRenderer({
@@ -62,12 +63,24 @@ if (Q.get("debug") === "1") {
   import("./debug.js").then((m) => m.installDebug({ space, rig, hud, camera }));
 }
 
+function updateMoonOrbit(simTime, pivot) {
+  const Mm = TAU * ((simTime % MOON_CFG.orbitDays) / MOON_CFG.orbitDays);
+  const Em = solveKepler(Mm, MOON_CFG.e);
+  const nu = 2 * Math.atan2(
+    Math.sqrt(1 + MOON_CFG.e) * Math.sin(Em / 2),
+    Math.sqrt(1 - MOON_CFG.e) * Math.cos(Em / 2));
+  pivot.rotation.y = nu;
+  moonMesh.position.x = MOON_CFG.aAU * (1 - MOON_CFG.e * Math.cos(Em)) * AU_UNIT;
+}
+
 // ?focus=天体 直接聚焦（含太阳/月球），用于截图与分享。
-// 必须先按当前 simTime 把位置算好再快照：否则首帧前 group.position 还是
-// (0,0,0)，focusFraming 取不到「行星→太阳」方向，会退化成固定方位拍到夜面
+// 先按当前 simTime 计算位置，避免首帧前聚焦到默认位置
 if (qFocus) {
   const simT0 = hud.getSimTime();
-  for (const p of planets) orbitalPosition(p.cfg, simT0, p.cfg._plane, p.group.position);
+  for (const p of planets) {
+    orbitalPosition(p.cfg, simT0, p.cfg._plane, p.group.position);
+    if (p.moonPivot) updateMoonOrbit(simT0, p.moonPivot);
+  }
   const f = space.focusables.find((x) => x.cfg.name === qFocus);
   if (f) rig.focusSnap(f.cfg, f.group);
 }
@@ -107,17 +120,8 @@ function animate() {
     // 先取模再乘 2π：?t= 极大时避免 (TAU/(spinHours/24))·simTime 溢出成 Infinity
     mesh.rotation.y = TAU * ((simTime % (cfg.spinHours / 24)) / (cfg.spinHours / 24));
 
-    // 月球：与行星同一套开普勒逻辑（e=0.0549 的椭圆轨道），
-    // pivot 按真近点角旋转 → 潮汐锁定自然成立，距离按 r = a(1−e·cosE) 更新
-    if (moonPivot && moonMesh) {
-      const Mm = TAU * ((simTime % MOON_CFG.orbitDays) / MOON_CFG.orbitDays);
-      const Em = solveKepler(Mm, MOON_CFG.e);
-      const nu = 2 * Math.atan2(
-        Math.sqrt(1 + MOON_CFG.e) * Math.sin(Em / 2),
-        Math.sqrt(1 - MOON_CFG.e) * Math.cos(Em / 2));
-      moonPivot.rotation.y = nu;
-      moonMesh.position.x = MOON_CFG.aAU * (1 - MOON_CFG.e * Math.cos(Em)) * AU_UNIT;
-    }
+    // 月球使用相同的开普勒模型；子级 pivot 公转同时实现潮汐锁定
+    if (moonPivot && moonMesh) updateMoonOrbit(simTime, moonPivot);
 
     // 最小可见光点：本体投影直径小于 6px 时才亮起，否则淡出
     if (dot) {

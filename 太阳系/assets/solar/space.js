@@ -117,11 +117,13 @@ function buildSun(sunUniforms, sunGroup) {
 
         float heat = n * 0.62 + n2 * 0.38;
 
-        // 米粒组织：高频纹理只在贴近时显现，远观不引入噪点
-        float fine = fbm3(vPos * 26.0 + vec3(uTime * 0.05, 0.0, 0.0), 4);
-        float ultra = fbm3(vPos * 96.0 + vec3(0.0, uTime * 0.08, 0.0), 3);
-        heat += (fine - 0.5) * 0.55 * uProx;
-        heat += (ultra - 0.5) * 0.30 * uProx;
+        // 高频纹理只在贴近时计算
+        if (uProx > 0.0) {
+          float fine = fbm3(vPos * 26.0 + vec3(uTime * 0.05, 0.0, 0.0), 4);
+          float ultra = fbm3(vPos * 96.0 + vec3(0.0, uTime * 0.08, 0.0), 3);
+          heat += (fine - 0.5) * 0.55 * uProx;
+          heat += (ultra - 0.5) * 0.30 * uProx;
+        }
 
         // 贴近时提高表面纹理对比：近看要有细节，不能是一块均匀的亮黄
         float contrast = 1.0 + 1.1 * uProx;
@@ -234,11 +236,11 @@ function orbitalPoint(cfg, E, matrix, out) {
 }
 
 export function orbitalPosition(cfg, days, matrix, out) {
-  // 太阳自身没有轨道（orbitDays = 0），避免 TAU/0 = Infinity 传成 NaN
   if (!(cfg.orbitDays > 0)) return out.set(0, 0, 0);
-  // 平近点角 = J2000 平黄经差 + 平均角速度 × 距 J2000 的天数
+  // 先约化时间，避免极大但有限的天数乘平均角速度后溢出
+  const phaseDays = ((days % cfg.orbitDays) + cfg.orbitDays) % cfg.orbitDays;
   const M = (cfg.meanLonDeg - cfg.varpiDeg) * DEG
-          + (TAU / cfg.orbitDays) * days
+          + TAU * (phaseDays / cfg.orbitDays)
           + cfg.mAnomalyBias;
   return orbitalPoint(cfg, solveKepler(M, cfg.e), matrix, out);
 }
@@ -335,24 +337,21 @@ export function createSpace(scene, renderer) {
       for (let i = 0; i < TEXW; i++) {
         const t = i / (TEXW - 1);
 
-        let bands = (Math.sin(t * 46.0) * 0.5 + 0.5) * 0.42
-                  + (Math.sin(t * 118.0 + 1.7) * 0.5 + 0.5) * 0.26
-                  + (Math.sin(t * 21.0 + 0.4) * 0.5 + 0.5) * 0.32;
+        const bands = (Math.sin(t * 46.0) * 0.5 + 0.5) * 0.42
+                    + (Math.sin(t * 118.0 + 1.7) * 0.5 + 0.5) * 0.26
+                    + (Math.sin(t * 21.0 + 0.4) * 0.5 + 0.5) * 0.32;
 
-        // 卡西尼缝：两道暗带
         const g1 = Math.abs(t - 0.62) / 0.035;
         const g2 = Math.abs(t - 0.34) / 0.03;
-        bands *= Math.min(1, Math.min(g1, g2));
-
-        // 内外缘渐隐
+        const gap = Math.min(1, g1, g2);
         const edge = Math.min(1, t / 0.06) * Math.min(1, (1 - t) / 0.08);
+        const coverage = gap * edge;
 
         const mixv = Math.min(1, bands);
-        // cB(0xa89070) → cA(0xf0e0b8)，整体提亮，让环在天黑背景下看得见
-        data[i*4+0] = Math.min(255, (0x9c + (0xd8 - 0x9c) * mixv) * (0.55 + edge * 0.45) * 0.92);
-        data[i*4+1] = Math.min(255, (0x82 + (0xc0 - 0x82) * mixv) * (0.55 + edge * 0.45) * 0.92);
-        data[i*4+2] = Math.min(255, (0x62 + (0x98 - 0x62) * mixv) * (0.55 + edge * 0.45) * 0.92);
-        data[i*4+3] = 255;
+        data[i*4+0] = Math.min(255, (0x9c + (0xd8 - 0x9c) * mixv) * 0.92);
+        data[i*4+1] = Math.min(255, (0x82 + (0xc0 - 0x82) * mixv) * 0.92);
+        data[i*4+2] = Math.min(255, (0x62 + (0x98 - 0x62) * mixv) * 0.92);
+        data[i*4+3] = Math.round(255 * coverage);
       }
 
       const tex = new THREE.DataTexture(data, TEXW, 1, THREE.RGBAFormat);

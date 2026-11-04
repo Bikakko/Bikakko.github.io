@@ -1,11 +1,12 @@
 /* ============================================================
    太阳系 · Solar · 轨道相机
-   - 自实现，限制在水平面以上（无 OrbitControls）
+   - 自实现，远景限制在黄道面上方（无 OrbitControls）
    - 触屏：touch-action + 手写 touch 事件
    - 滚轮：以光标为锚点平滑推拉（不聚焦、不猜目标）
    ============================================================ */
 import * as THREE from "three";
 import { PLANETS, MOON_CFG, SUN_RADIUS, qAz, qEl, qDist } from "./config.js";
+import { hasDragged, pinchZoomDistance } from "./camera-math.js";
 
 export function createCameraRig({ canvas, camera, space, hud }) {
   const { planets, focusables, clickable, moonMesh, sunGroup } = space;
@@ -296,68 +297,73 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   }
 
   let dragButton = 0;
+  let dragStartX = 0, dragStartY = 0;
 
   const _pivotV = new THREE.Vector3();
-  canvas.addEventListener("pointerdown", (e) => {
-    // 触摸由下面的 touch 事件独占处理：pointer/touch 双份监听都会触发，
-    // 单指拖动灵敏度会叠成 2.7 倍，双指捏合时还会同时转视角
-    if (e.pointerType === "touch") return;
-    // 只接受左键和右键；中键忽略
-    if (e.button !== 0 && e.button !== 2) return;
 
-    // 左键拖动前把旋转中心对齐到「黄道面上的天体位置」：
-    // 推拉几格后 target 可能停在星球与原点之间（或空白锚点上），
-    // 近距离绕这种中间点旋转，一下就把目标星球甩出视野。
-    // 优先取光标下的天体；光标附近没有，就取离观察中心最近的天体——
-    // 这样即使滚轮把锚点落在了空白处，拖一下也能把目标星球拉回视野。
-    // 只改 panOffset，target 由 updateCamera 平滑跟进，不会瞬移。
-    if (e.button === 0 && !focusTarget) {
-      let pivotObj = pickZoomAnchor(e.clientX, e.clientY, _pivotV, false);
-      if (!pivotObj) {
-        let bestD = Infinity;
-        const consider = (obj) => {
-          obj.getWorldPosition(_zoomBody);
-          const d = _zoomBody.distanceTo(orbit.target);
-          if (d < bestD) { bestD = d; _pivotV.copy(_zoomBody); pivotObj = obj; }
-        };
-        consider(sunGroup);
-        for (const p of planets) consider(p.group);
-        if (moonMesh) consider(moonMesh);
-      }
-      if (pivotObj) {
-        _pivotV.y = 0;   // 旋转中心落在黄道面上
-        orbit.panOffset.copy(_pivotV);
-      }
+  function takeOverCamera() {
+    focusFlight = null;
+    zoomRefDist = 0;
+    orbit.tDist = orbit.dist;
+    orbit.tTheta = orbit.theta;
+    orbit.tPhi = orbit.phi;
+  }
+
+  function alignOrbitPivot(clientX, clientY) {
+    if (focusTarget) return;
+    let pivotObj = pickZoomAnchor(clientX, clientY, _pivotV, false);
+    if (!pivotObj) {
+      let bestD = Infinity;
+      const consider = (obj) => {
+        obj.getWorldPosition(_zoomBody);
+        const d = _zoomBody.distanceTo(orbit.target);
+        if (d < bestD) { bestD = d; _pivotV.copy(_zoomBody); pivotObj = obj; }
+      };
+      consider(sunGroup);
+      for (const p of planets) consider(p.group);
+      if (moonMesh) consider(moonMesh);
     }
+    if (pivotObj) {
+      _pivotV.y = 0;
+      orbit.panOffset.copy(_pivotV);
+    }
+  }
+
+  function beginCameraDrag(clientX, clientY, button) {
+    viewTouched = true;
+    if (button === 0) alignOrbitPivot(clientX, clientY);
+    takeOverCamera();
+  }
+
+  canvas.addEventListener("pointerdown", (e) => {
+    // 触摸由下面的 touch 事件独占处理，避免 pointer/touch 双份触发
+    if (e.pointerType === "touch") return;
+    if (e.button !== 0 && e.button !== 2) return;
 
     dragButton = e.button;
     dragging = true;
     pointerMoved = false;
-    viewTouched = true;
-    focusFlight = null;   // 拖动接管，停掉聚焦过渡
-    zoomRefDist = 0;      // 停掉推拉滑行，但保留滚轮锚点：
-    // 点一下空白不应销毁「正在观察哪颗星球」的上下文，
-    // 否则下一次滚轮重新拾取落空会退回空白平面（下限 0.05，视角瞬间弹出）
-    lastX = e.clientX; lastY = e.clientY;
+    dragStartX = lastX = e.clientX;
+    dragStartY = lastY = e.clientY;
     try { canvas.setPointerCapture(e.pointerId); } catch (_) {}
-    document.documentElement.classList.add("dragging");
-    // 冻结当前朝向，避免残余缓动在拖动过程中改变视角；不重置 WASD/平移位置
-    orbit.tTheta = orbit.theta;
-    orbit.tPhi = orbit.phi;
   });
 
   canvas.addEventListener("pointermove", (e) => {
     if (!dragging) return;
     const dx = e.clientX - lastX;
     const dy = e.clientY - lastY;
-    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pointerMoved = true;
     lastX = e.clientX; lastY = e.clientY;
 
+    if (!pointerMoved && hasDragged(dragStartX, dragStartY, e.clientX, e.clientY)) {
+      pointerMoved = true;
+      beginCameraDrag(dragStartX, dragStartY, dragButton);
+      document.documentElement.classList.add("dragging");
+    }
+    if (!pointerMoved) return;
+
     if (dragButton === 2) {
-      // 右键 = 平移焦点：沿着相机自身的右向量和上向量移动观察目标点
       panTarget(dx, dy);
     } else {
-      // 左键 = 环绕：改轨道角度（近距离可越过水平面看星球底面）
       orbit.tTheta -= dx * 0.0048;
       orbit.tPhi = Math.min(maxPhi(), Math.max(MIN_PHI, orbit.tPhi - dy * 0.0040));
     }
@@ -373,14 +379,17 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   }
   canvas.addEventListener("pointerup", endDrag);
   canvas.addEventListener("pointercancel", endDrag);
-  // window 兜底：pointer capture 失败或 up 丢在画布外时，别让 dragging 永远卡住
   addEventListener("pointerup", endDrag);
   addEventListener("pointercancel", endDrag);
   addEventListener("blur", endDrag);
 
   function handleWheel(e) {
     e.preventDefault();
-    focusFlight = null;   // 滚轮接管，停掉聚焦过渡
+    if (focusFlight) {
+      focusFlight = null;
+      zoomRefDist = 0;
+      orbit.tDist = orbit.dist;
+    }
     // 指数式缩放：每格固定「乘一个倍率」，远近手感一致。
     // 倍率要配得上天文尺度的动态范围：全景 923 → 星球表面 0.0005 有 6 个数量级，
     // 每格 1.25 倍要滚 65 格才看得见星球，所以取每格 ≈ 1.8 倍（约 24 格到底）。
@@ -418,35 +427,28 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
   /* ---------- 触摸：手写 touch，防 pointer 被吞 ---------- */
   let pinchStart = 0, pinchDist = 0;
-  let touchLastX = 0, touchLastY = 0, touchDragging = false;
-  // tap 检测：touchend 的 preventDefault 会吞掉合成 click，
-  // 「点击天体聚焦」必须在 touch 流程里自己补
+  let touchLastX = 0, touchLastY = 0, touchDragging = false, touchDragStarted = false;
+  // touchend 自己完成 tap，避免 preventDefault 吞掉合成 click
   let touchTapX = 0, touchTapY = 0, touchTapMoved = false, touchLastTapAt = 0;
 
   canvas.addEventListener("touchstart", (e) => {
     if (e.touches.length === 2) {
-      touchDragging = false;
-      touchTapMoved = true;   // 捏合不算 tap
       const [a, b] = e.touches;
-      pinchStart = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-      // 与滚轮同一条幅度保护：先吸收未完成的滑行再作为捏合基准
-      if (Math.abs(orbit.tDist - orbit.dist) > orbit.dist * 0.7) {
-        orbit.tDist = orbit.dist;
-      }
-      pinchDist = orbit.dist;
+      touchDragging = false;
+      touchDragStarted = false;
+      touchTapMoved = true;
+      takeOverCamera();
       viewTouched = true;
-      orbit.tTheta = orbit.theta;
-      orbit.tPhi = orbit.phi;
+      pinchStart = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      pinchDist = orbit.dist;
     } else if (e.touches.length === 1) {
       touchDragging = true;
+      touchDragStarted = false;
       touchLastX = e.touches[0].clientX;
       touchLastY = e.touches[0].clientY;
       touchTapX = touchLastX;
       touchTapY = touchLastY;
       touchTapMoved = false;
-      viewTouched = true;
-      orbit.tTheta = orbit.theta;
-      orbit.tPhi = orbit.phi;
     }
     e.preventDefault();
   }, { passive: false });
@@ -457,34 +459,41 @@ export function createCameraRig({ canvas, camera, space, hud }) {
       const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
       const midX = (a.clientX + b.clientX) / 2;
       const midY = (a.clientY + b.clientY) / 2;
-      // 指数式捏合，并锁定两指中点为推拉焦点
-      zoomTowardCursor(pinchDist * Math.pow(d / pinchStart, 1.6), midX, midY);
+      zoomTowardCursor(pinchZoomDistance(pinchDist, pinchStart, d), midX, midY);
     } else if (touchDragging && e.touches.length === 1) {
       const t = e.touches[0];
       const dx = t.clientX - touchLastX;
       const dy = t.clientY - touchLastY;
       touchLastX = t.clientX;
       touchLastY = t.clientY;
-      if (Math.hypot(t.clientX - touchTapX, t.clientY - touchTapY) > 8) touchTapMoved = true;
-      orbit.tTheta -= dx * 0.0048 * 1.7;
-      orbit.tPhi = Math.min(maxPhi(), Math.max(MIN_PHI, orbit.tPhi - dy * 0.0040 * 1.7));
+      if (!touchDragStarted && hasDragged(touchTapX, touchTapY, t.clientX, t.clientY)) {
+        touchDragStarted = true;
+        touchTapMoved = true;
+        beginCameraDrag(touchTapX, touchTapY, 0);
+      }
+      if (touchDragStarted) {
+        orbit.tTheta -= dx * 0.0048 * 1.7;
+        orbit.tPhi = Math.min(maxPhi(), Math.max(MIN_PHI, orbit.tPhi - dy * 0.0040 * 1.7));
+      }
     }
     e.preventDefault();
   }, { passive: false });
 
   canvas.addEventListener("touchend", (e) => {
     if (e.touches.length === 0) {
+      const wasTap = !touchTapMoved;
       touchDragging = false;
+      touchDragStarted = false;
       pinchStart = 0;
-      // 位移小于阈值的单指抬起算 tap：点中天体聚焦，空白处双击回全景，与桌面对齐
-      if (!touchTapMoved) {
+      if (wasTap) {
         const t = e.changedTouches[0];
         const hit = pickPlanet(t.clientX, t.clientY);
         if (hit) {
           const holder = focusables.find(f => f.cfg === hit.userData);
           if (holder) focusOn(holder.cfg, holder.group);
-          touchLastTapAt = 0;   // 点中天体后不把下一次 tap 当双击
+          touchLastTapAt = 0;
         } else {
+          if (focusTarget) releaseFocus();
           const now = performance.now();
           if (now - touchLastTapAt < 350) resetView();
           touchLastTapAt = now;
@@ -493,11 +502,19 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     } else if (e.touches.length === 1) {
       pinchStart = 0;
       touchDragging = true;
+      touchDragStarted = true;
       touchLastX = e.touches[0].clientX;
       touchLastY = e.touches[0].clientY;
     }
     e.preventDefault();
   }, { passive: false });
+
+  canvas.addEventListener("touchcancel", () => {
+    touchDragging = false;
+    touchDragStarted = false;
+    touchTapMoved = true;
+    pinchStart = 0;
+  });
 
   /* ---------- 点击聚焦 ---------- */
   const raycaster = new THREE.Raycaster();
@@ -565,9 +582,8 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     return bestObj;
   }
 
-  // 聚焦取景：把相机放到行星的「向阳面」。
-  // 原来只改距离不改方位，外行星会正好把夜面转给我们，看起来就是一颗黑球。
-  // 返回球坐标下的取景参数，聚焦与 ?focus= 瞬移共用
+  // 距离供点击聚焦使用；向阳方位仅供 ?focus= 瞬移使用。
+  // 点击聚焦保留用户当前角度，避免把夜面取景规则误套到交互上。
   function focusFraming(cfg, wp) {
     // 相机放在「行星 → 太阳」连线的延长线上，且偏向一侧 40°，
     // 这样既看到亮面，又不至于正对着阳光全是白板。
@@ -612,6 +628,8 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     focusFlight = null;
     zoomRefDist = 0;   // 聚焦接管，停掉缩放动画
     zoomAnchorObj = null;
+    orbit.tTheta = orbit.theta;
+    orbit.tPhi = orbit.phi;
     viewTouched = true;
 
     const wp = new THREE.Vector3();
@@ -722,7 +740,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     const f = (moveKeys.has("KeyW") ? 1 : 0) - (moveKeys.has("KeyS") ? 1 : 0);
     const r = (moveKeys.has("KeyD") ? 1 : 0) - (moveKeys.has("KeyA") ? 1 : 0);
     if (!f && !r) return;
-    zoomRefDist = 0;   // 键盘平移接管，停掉缩放动画
+    if (focusFlight || zoomRefDist > 0 || orbit.tDist !== orbit.dist) takeOverCamera();
     zoomAnchorObj = null;
     viewTouched = true;
 

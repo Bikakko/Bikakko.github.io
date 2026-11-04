@@ -149,7 +149,7 @@ export function installDebug({ space, rig, hud, camera }) {
         periodDays: 27.321661,
       };
     },
-    // 当前自转角（弧度）与累计圈数，用于核对真实自转周期
+    // 当前自转角（弧度）与当前周期内圈数，用于核对真实自转周期
     spins() {
       return planets.map(p => ({
         name: p.cfg.name,
