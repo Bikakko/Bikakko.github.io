@@ -299,8 +299,6 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   let dragButton = 0;
   let dragStartX = 0, dragStartY = 0;
 
-  const _pivotV = new THREE.Vector3();
-
   function takeOverCamera() {
     focusFlight = null;
     zoomRefDist = 0;
@@ -309,29 +307,8 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     orbit.tPhi = orbit.phi;
   }
 
-  function alignOrbitPivot(clientX, clientY) {
-    if (focusTarget) return;
-    let pivotObj = pickZoomAnchor(clientX, clientY, _pivotV, false);
-    if (!pivotObj) {
-      let bestD = Infinity;
-      const consider = (obj) => {
-        obj.getWorldPosition(_zoomBody);
-        const d = _zoomBody.distanceTo(orbit.target);
-        if (d < bestD) { bestD = d; _pivotV.copy(_zoomBody); pivotObj = obj; }
-      };
-      consider(sunGroup);
-      for (const p of planets) consider(p.group);
-      if (moonMesh) consider(moonMesh);
-    }
-    if (pivotObj) {
-      _pivotV.y = 0;
-      orbit.panOffset.copy(_pivotV);
-    }
-  }
-
-  function beginCameraDrag(clientX, clientY, button) {
+  function beginCameraDrag() {
     viewTouched = true;
-    if (button === 0) alignOrbitPivot(clientX, clientY);
     takeOverCamera();
   }
 
@@ -356,7 +333,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
     if (!pointerMoved && hasDragged(dragStartX, dragStartY, e.clientX, e.clientY)) {
       pointerMoved = true;
-      beginCameraDrag(dragStartX, dragStartY, dragButton);
+      beginCameraDrag();
       document.documentElement.classList.add("dragging");
     }
     if (!pointerMoved) return;
@@ -469,7 +446,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
       if (!touchDragStarted && hasDragged(touchTapX, touchTapY, t.clientX, t.clientY)) {
         touchDragStarted = true;
         touchTapMoved = true;
-        beginCameraDrag(touchTapX, touchTapY, 0);
+        beginCameraDrag();
       }
       if (touchDragStarted) {
         orbit.tTheta -= dx * 0.0048 * 1.7;

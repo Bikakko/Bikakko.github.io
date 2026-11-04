@@ -14,7 +14,7 @@ import { createCameraRig } from "./camera.js";
 import { createLabels } from "./labels.js";
 
 // 构建标记：刷新后可在控制台确认运行的是哪一版
-const BUILD = "2026-11-05 · unified-input-static";
+const BUILD = "2026-11-05 · drag-pivot-stable";
 console.info("[solar] build " + BUILD);
 window.__solarBuild = BUILD;
 if (qStatic) document.documentElement.classList.add("static");
