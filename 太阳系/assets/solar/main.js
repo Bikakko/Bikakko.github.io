@@ -13,6 +13,11 @@ import { createHud } from "./hud.js";
 import { createCameraRig } from "./camera.js";
 import { createLabels } from "./labels.js";
 
+// 构建标记：刷新后可在控制台确认运行的是哪一版
+const BUILD = "2026-11-04 · zoom-anchor-keep";
+console.info("[solar] build " + BUILD);
+window.__solarBuild = BUILD;
+
 const canvas = document.getElementById("c");
 const renderer = new THREE.WebGLRenderer({
   canvas, antialias: true, powerPreference: "high-performance",
