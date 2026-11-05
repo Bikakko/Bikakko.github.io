@@ -36,13 +36,14 @@ export function frontRadius(lightSec) {
   return Math.max(SUN_CFG.radius, Math.max(0, lightSec) * UNITS_PER_LIGHT_SEC);
 }
 
-/* ---------- 脉冲序列 ----------
+/* ---------- 脉冲波纹 ----------
    脉冲按「现实时间」每一秒一次：在模拟时间轴上相邻脉冲相差
    intervalSec = rateSec × 真实间隔 模拟秒，所以倍率变化时脉冲频率不变。
-   第 k 个脉冲在 k·intervalSec 光行时发出，当前年龄 = t − k·intervalSec，
-   半径 = c·年龄 —— 每个脉冲都会持续膨胀，能长到和主波前一样大。
-   返回所有可见脉冲的半径（由大到小）；超过 maxCount 时均匀抽样，
-   保证最老（最大）与最新（最小）都在，而不是只留最近几个小球。
+   球层没有身份，用连续相位 phase = (t / step) mod 1 让它们平滑向外
+   推进并逐层接力；两端由 light-view 做淡入淡出，因此相位循环时不会
+   出现整体跳变。旧版按 floor(t/step) 离散抽样，1:1 下 n 每秒才 +1，
+   整个球阵每秒重排一次 —— 就是「心跳式抖动」而不是波纹。
+   radii[0] 恒为主波前（半径固定、带经纬网），其余由大到小连续滑动。
    纯函数 → 截图可复现。 */
 export function pulseRadii(lightSec, intervalSec = PULSE_FALLBACK_SEC,
                            maxCount = MAX_PULSES) {
@@ -50,19 +51,12 @@ export function pulseRadii(lightSec, intervalSec = PULSE_FALLBACK_SEC,
     ? intervalSec : PULSE_FALLBACK_SEC;
   const t = Number.isFinite(lightSec) ? Math.max(0, lightSec) : 0;
   const limit = Math.max(2, Math.floor(maxCount) || MAX_PULSES);
-  const n = Math.floor(t / step);            // 已发出的脉冲索引 0..n
-  const radii = [];
-  if (n + 1 <= limit) {
-    for (let k = 0; k <= n; k++) radii.push(frontRadius(t - k * step));
-  } else {
-    // 均匀抽样：k 等距覆盖 0..n，半径因此从最大到最小铺满整个传播过程
-    const seen = new Set();
-    for (let i = 0; i < limit; i++) {
-      const k = Math.round((i / (limit - 1)) * n);
-      if (seen.has(k)) continue;
-      seen.add(k);
-      radii.push(frontRadius(t - k * step));
-    }
+  const R = frontRadius(t);
+  const phase = (t / step) % 1;
+  const radii = [R];
+  for (let i = 1; i < limit; i++) {
+    const f = (limit - 1 - i + phase) / (limit - 1);   // 由大到小、连续滑动
+    radii.push(frontRadius(t * f));                     // 年龄 = t·f，半径 = c·t·f
   }
   return radii;
 }
