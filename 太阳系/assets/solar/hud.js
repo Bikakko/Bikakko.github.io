@@ -6,7 +6,7 @@ import { qT, qStatic } from "./config.js";
 
 export function createHud({ onHome }) {
   let simTime = qT;
-  let speedMul = 1.0;
+  let speedLevel = 1;
   // 暂停拆成「用户暂停」与「贴近自动暂停」两个状态：
   // 用户在被自动暂停时手动恢复，本次贴近不再自动压回（否则空格像失灵）
   let userPaused = false;
@@ -14,8 +14,8 @@ export function createHud({ onHome }) {
   let autoSuppressed = false;
   let nearBody = false;   // 最近一次 autoPauseCheck 报告的距离状态
   const pausedNow = () => userPaused || autoPaused;
-  // 每真实秒推进多少「天」：0.5 天 = 12 小时（1× 默认速度）
-  const DAYS_PER_SEC = 0.5;
+  // 档位 → 每真实秒推进多少「天」：1× 为现实速度，2×–8× 按小时换算
+  const DAYS_PER_SEC = [0, 1 / 86400, 0.5 / 24, 3 / 24, 12 / 24, 36 / 24, 72 / 24, 168 / 24, 720 / 24];
   let fpsAcc = 0, frames = 0;
 
   const fpsEl = document.getElementById("fps");
@@ -39,8 +39,10 @@ export function createHud({ onHome }) {
     infoPeriod.textContent = cfg.periodLabel || (cfg.orbitDays >= 365.25
       ? `${(cfg.orbitDays / 365.25).toFixed(2)} 年`
       : `${cfg.orbitDays.toFixed(2)} 天`);
-    infoMoons.textContent = cfg.moons > 0 ? `${cfg.moons} 颗` : "无";
-    infoInc.textContent = cfg.incLabel || `${Math.abs(cfg.incDeg).toFixed(2)}°`;
+    infoMoons.textContent = cfg.moons > 0
+      ? `${cfg.moons} 颗${cfg.moonsAsOf ? `（${cfg.moonsAsOf}）` : ""}`
+      : "无";
+    infoInc.textContent = cfg.incLabel || `${Math.abs(cfg.incDeg).toFixed(3)}°`;
     infoEl.classList.add("on");
   }
   function hideInfo() {
@@ -49,13 +51,12 @@ export function createHud({ onHome }) {
 
   /* ---------- 速度 / 暂停 ---------- */
   function renderSpeed() {
-    const label = speedMul.toFixed(2).replace(/\.?0+$/, "");
     const paused = pausedNow();
-    speedEl.textContent = label + "×" + (paused ? (autoPaused && !userPaused ? " ⏸自动" : " ⏸") : "");
+    speedEl.textContent = speedLevel + "×" + (paused ? (autoPaused && !userPaused ? " ⏸自动" : " ⏸") : "");
     for (const b of document.querySelectorAll(".ctrl button")) {
       if (b.dataset.sp === undefined) continue;
       const bv = parseFloat(b.dataset.sp);
-      b.classList.toggle("on", bv === 0 ? paused : (!paused && bv === speedMul));
+      b.classList.toggle("on", bv === 0 ? paused : (!paused && bv === speedLevel));
     }
   }
   function applySpeed(v) {
@@ -70,7 +71,7 @@ export function createHud({ onHome }) {
         userPaused = true;
       }
     } else {
-      speedMul = v;
+      speedLevel = v;
       userPaused = false;
       if (autoPaused || nearBody) {
         autoPaused = false;
@@ -95,8 +96,8 @@ export function createHud({ onHome }) {
     // 不劫持聚焦在按钮/标签/表单上的空格与方向键，保证键盘可达性
     if (e.target && e.target.closest
         && e.target.closest("button, a, input, textarea, select, .lbl")) return;
-    if (e.code === "ArrowUp")   applySpeed(Math.min(8, speedMul * 2));
-    if (e.code === "ArrowDown") applySpeed(Math.max(0.25, speedMul / 2));
+    if (e.code === "ArrowUp")   applySpeed(Math.min(8, speedLevel + 1));
+    if (e.code === "ArrowDown") applySpeed(Math.max(1, speedLevel - 1));
     if (e.code === "Space")     { e.preventDefault(); applySpeed(0); }
   });
 
@@ -119,7 +120,7 @@ export function createHud({ onHome }) {
 
   /* ---------- 时间推进与状态显示 ---------- */
   function advance(dt) {
-    if (!qStatic && !pausedNow()) simTime += dt * speedMul * DAYS_PER_SEC;
+    if (!qStatic && !pausedNow()) simTime += dt * DAYS_PER_SEC[speedLevel];
   }
 
   function renderTime() {

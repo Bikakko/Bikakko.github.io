@@ -5,16 +5,16 @@
    - 触屏：touch-action + 手写 touch 事件
    ============================================================ */
 import * as THREE from "three";
-import {
-  Q, qStatic, qFocus, MOON_CFG, SUN_RADIUS, TAU, AU_UNIT, RADIUS_SCALE,
-} from "./config.js";
-import { createSpace, orbitalPosition, solveKepler } from "./space.js";
+import { Q, qStatic, qFocus, RADIUS_SCALE } from "./config.js";
+import { SUN_CFG, MOON_CFG } from "./bodies.js";
+import { createSpace } from "./space.js";
+import { updatePlanets, updateSun } from "./body-system.js";
 import { createHud } from "./hud.js";
 import { createCameraRig } from "./camera.js";
 import { createLabels } from "./labels.js";
 
 // 构建标记：刷新后可在控制台确认运行的是哪一版
-const BUILD = "2026-11-05 · drag-pivot-stable";
+const BUILD = "2026-11-05 · per-body-iau";
 console.info("[solar] build " + BUILD);
 window.__solarBuild = BUILD;
 if (qStatic) document.documentElement.classList.add("static");
@@ -42,7 +42,7 @@ const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.5, 60
 
 const space = createSpace(scene, renderer);
 const {
-  stars, sunUniforms, corona1, corona2, corona3, sunDot,
+  stars, sunUniforms, sunRecord, coronas, sunDot,
   planets, moonMesh, moonDot,
 } = space;
 
@@ -63,24 +63,12 @@ if (Q.get("debug") === "1") {
   import("./debug.js").then((m) => m.installDebug({ space, rig, hud, camera }));
 }
 
-function updateMoonOrbit(simTime, pivot) {
-  const Mm = TAU * ((simTime % MOON_CFG.orbitDays) / MOON_CFG.orbitDays);
-  const Em = solveKepler(Mm, MOON_CFG.e);
-  const nu = 2 * Math.atan2(
-    Math.sqrt(1 + MOON_CFG.e) * Math.sin(Em / 2),
-    Math.sqrt(1 - MOON_CFG.e) * Math.cos(Em / 2));
-  pivot.rotation.y = nu;
-  moonMesh.position.x = MOON_CFG.aAU * (1 - MOON_CFG.e * Math.cos(Em)) * AU_UNIT;
-}
-
 // ?focus=天体 直接聚焦（含太阳/月球），用于截图与分享。
 // 先按当前 simTime 计算位置，避免首帧前聚焦到默认位置
 if (qFocus) {
   const simT0 = hud.getSimTime();
-  for (const p of planets) {
-    orbitalPosition(p.cfg, simT0, p.cfg._plane, p.group.position);
-    if (p.moonPivot) updateMoonOrbit(simT0, p.moonPivot);
-  }
+  updatePlanets(planets, simT0);
+  updateSun(sunRecord, simT0);
   const f = space.focusables.find((x) => x.cfg.name === qFocus);
   if (f) rig.focusSnap(f.cfg, f.group);
 }
@@ -106,26 +94,19 @@ function animate() {
   // 太阳
   sunUniforms.uTime.value = t;
   // 亮度随距离：0 = 远观，1 = 贴近（约 80 倍日面半径以内开始增强）
-  sunUniforms.uProx.value = Math.min(1, Math.max(0, 1 - camera.position.length() / (SUN_RADIUS * 80)));
+  sunUniforms.uProx.value = Math.min(1, Math.max(0, 1 - camera.position.length() / (SUN_CFG.radius * 80)));
 
-  // 公转与自转都由 simTime（距 J2000 的天数）直接决定，
-  // 自转:公转 严格等于 spinHours : orbitDays*24，?t= 截图也能对齐。
+  // 公转、自转、地月质心都由 simTime（距 J2000 的天数）直接决定；
+  // 自转姿态来自 IAU 极轴 + W 速率，?t= 截图也能对齐。
+  updatePlanets(planets, simTime);
+  updateSun(sunRecord, simTime);
+
   for (const p of planets) {
-    const { cfg, group, mesh, moonPivot, dot } = p;
-
-    // 公转：J2000 轨道要素 + 开普勒方程，椭圆轨道、速度随日心距变化
-    orbitalPosition(cfg, simTime, cfg._plane, group.position);
-
-    // 自转：真实周期（小时）。逆向自转（金星/天王星）由 >90° 的轴倾角表达。
-    // 先取模再乘 2π：?t= 极大时避免 (TAU/(spinHours/24))·simTime 溢出成 Infinity
-    mesh.rotation.y = TAU * ((simTime % (cfg.spinHours / 24)) / (cfg.spinHours / 24));
-
-    // 月球使用相同的开普勒模型；子级 pivot 公转同时实现潮汐锁定
-    if (moonPivot && moonMesh) updateMoonOrbit(simTime, moonPivot);
+    const { cfg, dot } = p;
 
     // 最小可见光点：本体投影直径小于 6px 时才亮起，否则淡出
     if (dot) {
-      const camDist = camera.position.distanceTo(group.position);
+      const camDist = camera.position.distanceTo(p.group.position);
       const dPx = (cfg.radius * 2) / (camDist * Math.tan(camera.fov * Math.PI / 360)) * (innerHeight / 2);
       // 6px 以下 → 完全显示；12px 以上 → 完全关闭
       const fade = Math.min(1, Math.max(0, (12 - dPx) / 6));
@@ -135,12 +116,12 @@ function animate() {
       dot.visible = fade > 0.02;
     }
 
-    mesh.material.uniforms.uTime.value = t;
+    p.mesh.material.uniforms.uTime.value = t;
   }
 
   // 太阳指示点：按投影尺寸淡入淡出，与行星光点同一规则
   {
-    const sunPx = (SUN_RADIUS * 2) / (camera.position.length()
+    const sunPx = (SUN_CFG.radius * 2) / (camera.position.length()
       * Math.tan(camera.fov * Math.PI / 360)) * (innerHeight / 2);
     const fade = Math.min(1, Math.max(0, (12 - sunPx) / 6));
     sunDot.material.opacity = fade * 0.62;
@@ -166,9 +147,7 @@ function animate() {
 
   // 光晕/星壳跟着「本帧」相机走：必须在 updateCamera 之后，
   // 否则快速拖动时用的是上一帧姿态，日冕面片会歪斜、星壳横向游移
-  corona1.quaternion.copy(camera.quaternion);
-  corona2.quaternion.copy(camera.quaternion);
-  corona3.quaternion.copy(camera.quaternion);
+  for (const c of coronas) c.quaternion.copy(camera.quaternion);
   stars.points.position.copy(camera.position);
 
   renderer.render(scene, camera);

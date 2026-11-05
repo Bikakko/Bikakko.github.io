@@ -3,7 +3,7 @@
    3D 位置投影到屏幕，固定贴在星球正下方，不做任何布局避让
    ============================================================ */
 import * as THREE from "three";
-import { MOON_CFG, SUN_CFG } from "./config.js";
+import { MOON_CFG, SUN_CFG } from "./bodies.js";
 
 export function createLabels({ space, rig, camera }) {
   const { planets, moonMesh, sunGroup } = space;

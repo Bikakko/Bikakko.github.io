@@ -5,7 +5,8 @@
    - 滚轮：以光标为锚点平滑推拉（不聚焦、不猜目标）
    ============================================================ */
 import * as THREE from "three";
-import { PLANETS, MOON_CFG, SUN_RADIUS, qAz, qEl, qDist } from "./config.js";
+import { PLANETS, MOON_CFG, SUN_CFG } from "./bodies.js";
+import { qAz, qEl, qDist } from "./config.js";
 import { hasDragged, pinchZoomDistance } from "./camera-math.js";
 
 export function createCameraRig({ canvas, camera, space, hud }) {
@@ -129,7 +130,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
   // 锚定天体的半径：推拉下限按它算（见 zoomTowardCursor）
   function bodyRadiusOf(obj) {
-    if (obj === sunGroup) return SUN_RADIUS;
+    if (obj === sunGroup) return SUN_CFG.radius;
     if (obj === moonMesh) return MOON_CFG.radius;
     const p = planets.find(x => x.group === obj);
     return p ? p.cfg.radius : 0;
@@ -182,7 +183,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
       }
     };
 
-    consider(sunGroup, SUN_RADIUS, false);
+    consider(sunGroup, SUN_CFG.radius, false);
     for (const p of planets) consider(p.group, p.cfg.radius, true);
     if (moonMesh) consider(moonMesh, MOON_CFG.radius, true);
 

@@ -3,8 +3,9 @@
    用于验证自转轴、季节、比例与相机状态，生产访问不受影响
    ============================================================ */
 import * as THREE from "three";
+import { SUN_CFG, MOON_CFG } from "./bodies.js";
 import {
-  AU_UNIT, KM_PER_UNIT, RADIUS_SCALE, SUN_RADIUS, TAU, DEG, kmToUnit,
+  AU_UNIT, KM_PER_UNIT, RADIUS_SCALE, TAU, DEG,
 } from "./config.js";
 
 export function installDebug({ space, rig, hud, camera }) {
@@ -45,7 +46,7 @@ export function installDebug({ space, rig, hud, camera }) {
       p.cfg.mAnomalyBias = deg * DEG - M;
       return true;
     },
-    get sunRadius() { return SUN_RADIUS; },
+    get sunRadius() { return SUN_CFG.radius; },
     get simTime() { return hud.getSimTime(); },
     // 光标缩放探针：返回光标下目标平面点的世界坐标
     probe(x, y) {
@@ -112,6 +113,13 @@ export function installDebug({ space, rig, hud, camera }) {
       const f = rig.getFocusTarget();
       return f ? f.cfg.name : null;
     },
+    // 轨道线相对质心轨道的平移（地球会随月球质心偏移）
+    orbitLines() {
+      return planets.map(p => ({
+        name: p.cfg.name,
+        offset: p.orbitLine ? p.orbitLine.position.toArray().map(v => +v.toFixed(9)) : null,
+      }));
+    },
     get zoomAnchor() { return rig.getZoomAnchorName(); },
     view() {
       const f = rig.getFocusTarget();
@@ -133,7 +141,7 @@ export function installDebug({ space, rig, hud, camera }) {
     },
     // 实际几何半径：太阳 + 八行星（世界单位）
     radii() {
-      const out = { "太阳": SUN_RADIUS };
+      const out = { "太阳": SUN_CFG.radius };
       for (const p of planets) out[p.cfg.name] = +p.mesh.geometry.parameters.radius.toFixed(10);
       return out;
     },
@@ -144,17 +152,18 @@ export function installDebug({ space, rig, hud, camera }) {
     },
     moon() {
       return {
-        radiusKm: 1737.4, radius: kmToUnit(1737.4),
-        distanceKm: 384400, distance: 384400 / KM_PER_UNIT,
-        periodDays: 27.321661,
+        radiusKm: MOON_CFG.radiusKm, radius: MOON_CFG.radius,
+        distanceKm: +(MOON_CFG.orbit * KM_PER_UNIT).toFixed(1),
+        distance: MOON_CFG.orbit,
+        periodDays: MOON_CFG.orbitDays,
       };
     },
     // 当前自转角（弧度）与当前周期内圈数，用于核对真实自转周期
     spins() {
       return planets.map(p => ({
         name: p.cfg.name,
-        rotation: +p.mesh.rotation.y.toFixed(6),
-        turns: +(p.mesh.rotation.y / TAU).toFixed(3),
+        rotation: +p.spinRad.toFixed(6),
+        turns: +(p.spinRad / TAU).toFixed(3),
       }));
     },
     // 比例审计：半径比例应恒为 RADIUS_SCALE，轨道比例应恒为 AU_UNIT
