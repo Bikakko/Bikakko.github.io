@@ -7,7 +7,9 @@
      每层另有黄道面大圆（光弧），主球额外带两条子午圆给出纵深。
    - 脉冲按「现实时间」每 1 秒一层，与模拟倍率无关：换算成模拟时间轴
      间隔 = rateSec × qPulseEvery，仍是 lightSec 的纯函数，可复现。
-     最多 8 层；相机被外层光球包裹后仍能看到后续脉冲从太阳向外扩散。
+     每个脉冲都持续膨胀，能长到和主波前一样大；最多同时 32 层，
+     超出时均匀抽样（保留最大与最小）。相机被外层光球包裹后仍能
+     看到后续脉冲从太阳向外扩散。
    - 八条太阳→行星光线，按主波前半径裁断，前端高亮。
    ============================================================ */
 import * as THREE from "three";
@@ -69,11 +71,11 @@ export function createLightView(scene, camera) {
   /* ---------- 半透明光球 ----------
      NormalBlending：N 层相同颜色叠加后趋向球面色，不会像加性混合那样
      越叠越亮直至白屏。内部 alpha 极低，只有轮廓（fres）可见为细环，
-     因此多层球壳叠在一起也不会糊住内部行星。 */
+     因此几十层球壳叠在一起也不会糊住内部行星。 */
   const sphereMat = new THREE.ShaderMaterial({
     uniforms: {
       uColor:   { value: new THREE.Color(0xffc078) },
-      uOpacity: { value: 0.11 },
+      uOpacity: { value: 0.055 },
     },
     transparent: true, depthWrite: false, depthTest: true,
     side: THREE.DoubleSide, blending: THREE.NormalBlending,
@@ -97,7 +99,7 @@ export function createLightView(scene, camera) {
       ${LOGDEPTH_PARS_FRAG}
       void main() {
         float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vView))), 2.0);
-        float a = uOpacity * (0.18 + 0.82 * fres);
+        float a = uOpacity * (0.12 + 0.88 * fres);
         gl_FragColor = vec4(uColor, a);
         ${LOGDEPTH_FRAG}
       }
@@ -187,7 +189,7 @@ export function createLightView(scene, camera) {
   // 模拟时间轴上的脉冲间隔。脉冲序列仍是 lightSec 的纯函数。
   function update(lightSec, simTime, rateSec = 1) {
     const interval = Math.max(1, rateSec * qPulseEvery);
-    const radii = pulseRadii(lightSec, interval);   // [主波前, 最近若干脉冲]
+    const radii = pulseRadii(lightSec, interval);   // 全部脉冲，由大到小
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i];
       const active = i < radii.length;

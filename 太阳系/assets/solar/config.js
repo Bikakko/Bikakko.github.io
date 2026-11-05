@@ -52,7 +52,7 @@ export const SECONDS_PER_DAY     = 86400;
 // ============================================================
 export const TIME_RATES = [1, 60, 600, 3600, 21600, 86400, 604800, 2592000];
 export const TIME_RATE_DEFAULT = 1;      // 真实时间 1:1
-export const TIME_RATE_LIGHT   = 600;    // 打开光速模式且未指定 ?rate 时的推荐倍率
+// 打开光速模式时默认也是 1:1（真实时间），可用 ?rate= 指定其它档
 
 // 脉冲：按「现实时间」每 PULSE_EVERY_REAL_SEC 秒发出一层新光球，与模拟
 // 倍率无关。实现上换算成模拟时间轴间隔 = rateSec × 真实间隔（1 真实秒
@@ -60,7 +60,7 @@ export const TIME_RATE_LIGHT   = 600;    // 打开光速模式且未指定 ?rate
 // / ?lt 截图都一致，不需要第二个累加时钟。层数上限刻意压低：多层半透明
 // 球面叠加会糊住内部，且经纬线只画一套，避免密密麻麻的平行线。
 export const PULSE_EVERY_REAL_SEC = 1;
-export const MAX_PULSES           = 8;
+export const MAX_PULSES           = 32;
 // pulseRadii 未显式传间隔时的兜底（正常调用总是传 rateSec × 真实间隔）
 export const PULSE_FALLBACK_SEC   = 600;
 

@@ -6,8 +6,8 @@
    （模拟秒 / 真实秒）。天体运行与光波前都由它派生，不再有第二套时钟。
    ============================================================ */
 import {
-  qT, qStatic, qRate, qLight,
-  TIME_RATES, TIME_RATE_DEFAULT, TIME_RATE_LIGHT,
+  qT, qStatic, qRate,
+  TIME_RATES, TIME_RATE_DEFAULT,
 } from "./config.js";
 import { advancedSimDays } from "./light-math.js";
 
@@ -25,7 +25,7 @@ const RATE_LABELS = {
 
 export function createHud({ onHome }) {
   let simTime = qT;
-  let rateSec = qRate ?? (qLight ? TIME_RATE_LIGHT : TIME_RATE_DEFAULT);
+  let rateSec = qRate ?? TIME_RATE_DEFAULT;   // 打开光速模式时也默认真实时间 1:1
   let userPaused = false;
   const pausedNow = () => userPaused;
   let fpsAcc = 0, frames = 0;

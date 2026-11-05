@@ -78,11 +78,9 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   // 用户是否主动改变过视角（推拉/平移/旋转/聚焦）。resize 只在从未动过时重算全景距离
   let viewTouched = false;
 
-  // 屏蔽右键菜单，右键改为拖动视角（canvas 的事件会冒泡到 document）
-  document.addEventListener("contextmenu", (e) => {
-    // 只在画布区域屏蔽，不影响其它 UI
-    if (e.target === canvas) e.preventDefault();
-  });
+  // 右键在本应用中是「平移视角」手势。行星标签等 DOM 覆盖层浮在 canvas
+  // 之上，contextmenu 的 target 不是 canvas，因此要在整个文档范围屏蔽菜单。
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
 
   // 0=左键 2=右键。两者都用于拖动；只有左键点击会触发聚焦
   // 右键平移：按屏幕像素换算成世界坐标位移，方向跟随当前相机朝向。

@@ -6,7 +6,7 @@
    与天体运行永远同步，面板上只显示一个时间流速。
    ============================================================ */
 import {
-  qLight, qLightT, qLightStatic, qRate, TIME_RATE_LIGHT,
+  qLight, qLightT, qLightStatic,
 } from "./config.js";
 import {
   lightArrivals, lightSecondsSince, emissionPlusSeconds,
@@ -130,11 +130,8 @@ export function createLightHud({ hud, lightView }) {
 
   function toggle() {
     const next = !on;
-    if (next) {
-      // 默认真实时间下打开光速模式，切到能看清光波前的统一倍率
-      if (qRate === null && hud.getRate() === 1) hud.setRate(TIME_RATE_LIGHT);
-      if (!qLightStatic) hud.setPaused(false);
-    }
+    // 打开即开始；倍率保持用户当前选择（默认 1:1 真实时间），不再自动切换
+    if (next && !qLightStatic) hud.setPaused(false);
     setOn(next);
   }
   function togglePlay() {

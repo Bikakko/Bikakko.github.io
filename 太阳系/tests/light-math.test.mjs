@@ -10,7 +10,7 @@ import {
 import {
   C_KM_S, KM_PER_AU, KM_PER_UNIT, AU_UNIT,
   UNITS_PER_LIGHT_SEC, LIGHT_SEC_PER_AU,
-  SECONDS_PER_DAY, TIME_RATES, TIME_RATE_DEFAULT, TIME_RATE_LIGHT,
+  SECONDS_PER_DAY, TIME_RATES, TIME_RATE_DEFAULT,
   PULSE_EVERY_REAL_SEC, MAX_PULSES, PULSE_FALLBACK_SEC,
 } from "../assets/solar/config.js";
 import { SUN_CFG, PLANETS } from "../assets/solar/bodies.js";
@@ -98,10 +98,9 @@ test("光行时 ↔ 统一时间轴换算：重播与标尺拖动", () => {
   assert.equal(frontRadius(lightSecondsSince(emission, emission)), SUN_CFG.radius);
 });
 
-test("统一倍率表：只有一套，1:1 是真实时间", () => {
+test("统一倍率表：只有一套，默认 1:1 真实时间", () => {
   assert.equal(TIME_RATE_DEFAULT, 1);
   assert.equal(TIME_RATES[0], 1);
-  assert.equal(TIME_RATE_LIGHT, 600);
   assert.ok(TIME_RATES.includes(600));
   for (let i = 1; i < TIME_RATES.length; i++) {
     assert.ok(TIME_RATES[i] > TIME_RATES[i - 1]);
@@ -127,28 +126,30 @@ test("时间格式化", () => {
   assert.equal(formatLightTime(15005), "4 小时 10 分 5 秒");
 });
 
-test("脉冲序列：主波前始终保留 + 最近若干层，纯函数可复现", () => {
+test("脉冲序列：每个脉冲持续膨胀，半径铺满 0..主波前", () => {
   const step = 600;
   assert.equal(PULSE_EVERY_REAL_SEC, 1);
-  assert.equal(MAX_PULSES, 8);
+  assert.equal(MAX_PULSES, 32);
 
   // 还没发出第二个脉冲：只有主波前
   assert.deepEqual(pulseRadii(0, step), [frontRadius(0)]);
   assert.deepEqual(pulseRadii(300, step), [frontRadius(300)]);
   assert.deepEqual(pulseRadii(599, step), [frontRadius(599)]);
 
-  // 正好第二次脉冲：主波前 + 刚发出的新球
+  // 第二次脉冲：主波前 + 刚发出的新球
   const two = pulseRadii(600, step);
   assert.equal(two.length, 2);
   assert.ok(close(two[0], frontRadius(600), 1e-9));
   assert.equal(two[1], frontRadius(0));
 
-  // 到海王星：主波前仍是最大球，其后脉冲等间距，层数受上限约束
+  // 到海王星：所有脉冲都保留，半径从主波前一路递减到接近 0。
+  // 后续脉冲已长得接近初始光球，不再只有一小部分大。
   const all = pulseRadii(15005, step);
-  assert.equal(all.length, MAX_PULSES);
-  assert.ok(close(all[0], frontRadius(15005), 1e-9), "radii[0] 始终是主波前");
-  assert.ok(all[1] < all[0]);
-  for (let i = 2; i < all.length; i++) {
+  assert.equal(all.length, Math.floor(15005 / step) + 1);
+  assert.ok(close(all[0], frontRadius(15005), 1e-9));
+  assert.ok(all[1] > frontRadius(15005) * 0.9, "第二个脉冲已接近主波前尺寸");
+  assert.ok(all[all.length - 1] < 1, "最新脉冲刚出发");
+  for (let i = 1; i < all.length; i++) {
     assert.ok(all[i] < all[i - 1], `第 ${i} 层应更靠内`);
     assert.ok(close(all[i - 1] - all[i], step * UNITS_PER_LIGHT_SEC, 1e-6));
   }
@@ -157,26 +158,26 @@ test("脉冲序列：主波前始终保留 + 最近若干层，纯函数可复�
 
 test("脉冲按真实时间每 1 秒一次：间隔 = 倍率 × 真实间隔，与倍率无关", () => {
   const lightSec = 15005;
-  // 真实每秒一脉冲 → 模拟轴上相邻脉冲相差 rateSec 模拟秒
   for (const rate of [1, 60, 600, 3600]) {
     const radii = pulseRadii(lightSec, rate);
     assert.equal(radii.length, Math.min(MAX_PULSES, Math.floor(lightSec / rate) + 1),
       `rate=${rate} 层数`);
     assert.ok(close(radii[0], frontRadius(lightSec), 1e-9));
-    // 间隔较大时不受日面半径下限影响，可直接校验等间距
-    if (rate >= 600 && radii.length >= 3) {
-      assert.ok(close(radii[radii.length - 2] - radii[radii.length - 1],
-        rate * UNITS_PER_LIGHT_SEC, 1e-6), `rate=${rate} 相邻脉冲间隔`);
-    }
+    assert.ok(radii[radii.length - 1] < radii[0], "半径覆盖整个传播过程");
   }
   // 极慢倍率（30 天/秒）下光行时还不够发第二次脉冲
   assert.equal(pulseRadii(lightSec, 2592000).length, 1);
 });
 
-test("脉冲层数上限、非法间隔与负光行时", () => {
-  const many = pulseRadii(600 * 100, 600, 4);
-  assert.equal(many.length, 4);
-  assert.ok(close(many[0], frontRadius(600 * 100), 1e-9));
+test("脉冲超过层数上限时均匀抽样，仍保留最大与最小", () => {
+  const total = frontRadius(600 * 100);
+  const radii = pulseRadii(600 * 100, 600, 8);
+  assert.equal(radii.length, 8);
+  assert.ok(close(radii[0], total, 1e-9), "最老/最大仍在");
+  assert.equal(radii[radii.length - 1], frontRadius(0), "最新/最小仍在");
+  for (let i = 1; i < radii.length; i++) assert.ok(radii[i] < radii[i - 1]);
+  assert.ok(radii[1] > total * 0.5, "抽样球分布在整个区间而非挤在最小值附近");
+
   assert.equal(pulseRadii(1200, 0).length, pulseRadii(1200, PULSE_FALLBACK_SEC).length);
   assert.deepEqual(pulseRadii(-100, 600), [frontRadius(0)]);
 });
