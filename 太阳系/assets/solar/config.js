@@ -54,15 +54,13 @@ export const TIME_RATES = [1, 60, 600, 3600, 21600, 86400, 604800, 2592000];
 export const TIME_RATE_DEFAULT = 1;      // 真实时间 1:1
 // 打开光速模式时默认也是 1:1（真实时间），可用 ?rate= 指定其它档
 
-// 脉冲：按「现实时间」每 PULSE_EVERY_REAL_SEC 秒发出一层新光球，与模拟
-// 倍率无关。实现上换算成模拟时间轴间隔 = rateSec × 真实间隔（1 真实秒
-// 推进 rateSec 模拟秒），仍是 lightSec 的纯函数，因此暂停 / 重播 / 拖标尺
-// / ?lt 截图都一致，不需要第二个累加时钟。层数上限刻意压低：多层半透明
-// 球面叠加会糊住内部，且经纬线只画一套，避免密密麻麻的平行线。
-export const PULSE_EVERY_REAL_SEC = 1;
-export const MAX_PULSES           = 32;
-// pulseRadii 未显式传间隔时的兜底（正常调用总是传 rateSec × 真实间隔）
-export const PULSE_FALLBACK_SEC   = 600;
+// 脉冲间隔按「光行时」固定为 5 光秒（物理量，与观看倍率无关）。
+// 球层半径 = c·(已传播的光秒)，因此波纹严格以光速向外扩散；不再按主波前
+// 归一化（那会让 dR/dt 变成 c 的若干倍，看起来明显超光速）。
+// 层数上限压低：多层半透明球面叠加会糊住内部，且经纬线只画一套。
+export const PULSE_INTERVAL_LIGHT_SEC = 5;
+export const MAX_PULSES              = 32;
+export const PULSE_FALLBACK_SEC      = PULSE_INTERVAL_LIGHT_SEC;
 
 /* ---------- 光速查询参数（与其它 ?参数 同样用于复现截图） ---------- */
 export const qLight = Q.get("light") === "1";
@@ -76,8 +74,8 @@ export const qLightT      = (() => {
   return v !== null && v >= 0 ? v : null;
 })();
 export const qLightStatic = qStatic || Q.get("lstatic") === "1";
-// ?pulse=<真实秒> 覆盖脉冲的现实时间间隔（默认 1 秒）
-export const qPulseEvery = (() => {
+// ?pulse=<光秒> 覆盖脉冲的物理间隔（默认 5 光秒）
+export const qPulseLightSec = (() => {
   const v = numParam("pulse");
-  return v !== null && v > 0 ? v : PULSE_EVERY_REAL_SEC;
+  return v !== null && v > 0 ? v : PULSE_INTERVAL_LIGHT_SEC;
 })();

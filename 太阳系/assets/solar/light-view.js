@@ -1,21 +1,20 @@
 /* ============================================================
-   太阳系 · Solar · 3D 光速视觉层（半透明光球 + 连续波纹脉冲）
-   - 每层光球是真实 3D 半透明球面：轮廓略亮、内部极淡，普通混合。
-     多层叠加只会收敛到球面颜色，不会累积成白团（不做加性混合）。
-   - 经纬线只画在最外层主球上，统一普通亮度、1px 线宽；多层各画一套
-     会叠成密密麻麻的平行线，所以整套场景只有一套经纬网。
-     每层另有黄道面大圆（光弧），主球额外带两条子午圆给出纵深。
-   - 脉冲按「现实时间」每 1 秒一层：换算成模拟时间轴间隔
-     = rateSec × qPulseEvery。球层用连续相位平滑向外推进并逐层接力，
-     两端按归一化半径淡入淡出，因此相位循环处不会出现整体跳变
-     （1:1 下旧版每秒重排一次球阵，表现为「心跳式抖动」）。
-   - 八条太阳→行星光线，按主波前半径裁断，前端高亮。
+   太阳系 · Solar · 3D 光速视觉层（主波前 + 严格光速波纹）
+   - 主波前球：半径 = c·lightSec，带唯一一套经纬网和三个正交大圆，
+     表示光已经走到的最远处。
+   - 波纹球：每 5 光秒一层，半径 = c·((k+phase)·step)，phase 连续滑动，
+     dR/dt 恒等于 c —— 波纹严格以光速向外扩散，不会超光速；两端淡入
+     淡出掩盖相位接力。全部是真实 3D 半透明球面，普通混合不累积亮度。
+   - 每条太阳→行星光线按主波前裁断，并每隔 1 光秒显示一个亮点，
+     亮点随波前以光速向外流动。
    ============================================================ */
 import * as THREE from "three";
 import { PLANETS } from "./bodies.js";
 import { orbitalPosition } from "./orbit-math.js";
 import { pulseRadii, frontRadius } from "./light-math.js";
-import { qPulseEvery, MAX_PULSES } from "./config.js";
+import {
+  qPulseLightSec, MAX_PULSES, UNITS_PER_LIGHT_SEC,
+} from "./config.js";
 import {
   LOGDEPTH_PARS_VERT, LOGDEPTH_VERT, LOGDEPTH_PARS_FRAG, LOGDEPTH_FRAG,
 } from "./shaders.js";
@@ -67,14 +66,14 @@ export function createLightView(scene, camera) {
   group.visible = false;
   scene.add(group);
 
-  /* ---------- 半透明光球模板 ----------
+  /* ---------- 半透明球面模板 ----------
      NormalBlending：N 层叠加后趋向球面色，不会像加性混合那样越叠越亮。
-     每层 clone 一份材质，用 uLayerFade 做两端淡入淡出，掩盖波纹接力。 */
+     每层 clone 一份材质（共享同一 shader program），用 uLayerFade 淡入淡出。 */
   const sphereMatTemplate = new THREE.ShaderMaterial({
     uniforms: {
-      uColor:      { value: new THREE.Color(0xffc078) },
-      uOpacity:    { value: 0.055 },
-      uLayerFade:  { value: 1 },
+      uColor:     { value: new THREE.Color(0xffc078) },
+      uOpacity:   { value: 0.055 },
+      uLayerFade: { value: 1 },
     },
     transparent: true, depthWrite: false, depthTest: true,
     side: THREE.DoubleSide, blending: THREE.NormalBlending,
@@ -109,42 +108,47 @@ export function createLightView(scene, camera) {
   const sphereGeo = new THREE.SphereGeometry(1, 48, 32);
   const gridGeo = makeGridGeometry(10, 16, 64);
   const circleGeo = makeCircleGeometry();
-  const lineMatTemplate = new THREE.LineBasicMaterial({
+  const lineMat = new THREE.LineBasicMaterial({
     color: 0xffb066, transparent: true, opacity: 0.30,
     depthWrite: false, depthTest: true, blending: THREE.NormalBlending,
   });
 
-  const slots = [];
-  for (let i = 0; i < MAX_PULSES; i++) {
-    // 每层独立材质：共享同一份 shader program，但 opacity / uLayerFade 独立
-    const sMat = sphereMatTemplate.clone();
-    const lMat = lineMatTemplate.clone();
-    const sphere = new THREE.Mesh(sphereGeo, sMat);
-    sphere.renderOrder = 2;
-    const equator = new THREE.LineLoop(circleGeo, lMat);
-    equator.rotation.x = -Math.PI / 2;              // XZ：黄道面
-    equator.renderOrder = 3;
-    const parts = [sphere, equator];
-    if (i === 0) {
-      // 整套场景只有这一套经纬网，避免多层叠加成平行线团
-      const grid = new THREE.LineSegments(gridGeo, lMat);
-      const merA = new THREE.LineLoop(circleGeo, lMat);   // XY
-      const merB = new THREE.LineLoop(circleGeo, lMat);   // YZ
-      merB.rotation.y = Math.PI / 2;
-      for (const o of [grid, merA, merB]) o.renderOrder = 3;
-      parts.push(grid, merA, merB);
-    }
-    for (const o of parts) {
-      o.frustumCulled = false;
-      o.visible = false;
-      group.add(o);
-    }
-    slots.push({ parts, sMat, lMat });
+  /* ---------- 主波前球（带唯一一套经纬网） ---------- */
+  const mainSphereMat = sphereMatTemplate.clone();
+  const mainParts = [];
+  const mainSphere = new THREE.Mesh(sphereGeo, mainSphereMat);
+  mainSphere.renderOrder = 2;
+  const mainEquator = new THREE.LineLoop(circleGeo, lineMat);
+  mainEquator.rotation.x = -Math.PI / 2;              // XZ：黄道面
+  const mainGrid = new THREE.LineSegments(gridGeo, lineMat);
+  const mainMerA = new THREE.LineLoop(circleGeo, lineMat);   // XY
+  const mainMerB = new THREE.LineLoop(circleGeo, lineMat);   // YZ
+  mainMerB.rotation.y = Math.PI / 2;
+  for (const o of [mainEquator, mainGrid, mainMerA, mainMerB]) o.renderOrder = 3;
+  mainParts.push(mainSphere, mainEquator, mainGrid, mainMerA, mainMerB);
+  for (const o of mainParts) {
+    o.frustumCulled = false;
+    group.add(o);
   }
 
-  /* ---------- 八条光线（世界空间线段） ---------- */
+  /* ---------- 波纹球槽位（每 5 光秒一层） ---------- */
+  const ripples = [];
+  for (let i = 0; i < MAX_PULSES; i++) {
+    const mat = sphereMatTemplate.clone();
+    const mesh = new THREE.Mesh(sphereGeo, mat);
+    mesh.renderOrder = 2;
+    mesh.frustumCulled = false;
+    mesh.visible = false;
+    group.add(mesh);
+    ripples.push({ mesh, mat });
+  }
+
+  /* ---------- 八条光线（世界空间线段 + 每 1 光秒一个亮点） ---------- */
   const rayMatFor = () => new THREE.ShaderMaterial({
-    uniforms: { uFront: { value: 0 } },
+    uniforms: {
+      uFront:       { value: 0 },
+      uDotSpacing:  { value: UNITS_PER_LIGHT_SEC },   // 1 光秒对应的世界单位
+    },
     transparent: true, depthWrite: false, depthTest: false,
     blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */ `
@@ -159,14 +163,19 @@ export function createLightView(scene, camera) {
     `,
     fragmentShader: /* glsl */ `
       uniform float uFront;
+      uniform float uDotSpacing;
       varying vec3 vWorld;
       ${LOGDEPTH_PARS_FRAG}
       void main() {
         float d = length(vWorld);
         if (d > uFront) discard;
         float head = smoothstep(uFront * 0.94, uFront, d);
+        // 亮点：每 1 光秒一个，位置 = uFront − k·spacing，随波前以 c 向外流动
+        float ph = fract((uFront - d) / uDotSpacing);
+        float bead = 1.0 - smoothstep(0.0, 0.18, min(ph, 1.0 - ph));
         vec3 col = mix(vec3(0.42, 0.60, 1.0), vec3(1.0, 0.85, 0.55), head);
-        gl_FragColor = vec4(col, 0.22 + 0.65 * head);
+        col += vec3(1.0, 0.88, 0.55) * bead * 0.9;
+        gl_FragColor = vec4(col, 0.22 + 0.65 * head + 0.55 * bead);
         ${LOGDEPTH_FRAG}
       }
     `,
@@ -188,31 +197,23 @@ export function createLightView(scene, camera) {
   const _camPos = new THREE.Vector3();
   let cameraInside = false;
 
-  // rateSec：当前统一倍率（模拟秒/真实秒），用于把「每真实 1 秒」换算成
-  // 模拟时间轴上的脉冲间隔。脉冲序列仍是 lightSec 的纯函数。
-  function update(lightSec, simTime, rateSec = 1) {
-    const interval = Math.max(1, rateSec * qPulseEvery);
-    const radii = pulseRadii(lightSec, interval);   // 连续相位波纹，由大到小
+  function update(lightSec, simTime) {
     const mainR = frontRadius(lightSec);
+    for (const o of mainParts) o.scale.setScalar(mainR);
 
-    for (let i = 0; i < slots.length; i++) {
-      const s = slots[i];
+    // 波纹严格光速：间隔是固定光秒，与观看倍率无关
+    const radii = pulseRadii(lightSec, qPulseLightSec);
+    const last = radii.length - 1;
+    for (let i = 0; i < ripples.length; i++) {
+      const r = ripples[i];
       const active = i < radii.length;
-      if (active) {
-        // 归一化半径：接近 0（刚从日面冒出）或 1（并入主波前）时淡出，
-        // 波纹接力发生在不可见处，因此不会出现每秒一次的整体重排。
-        const f = radii[i] / Math.max(mainR, 1e-9);
-        const fade = i === 0 ? 1
-          : Math.min(1, Math.max(0, f / 0.06)) * Math.min(1, Math.max(0, (1 - f) / 0.06));
-        s.sMat.uniforms.uLayerFade.value = fade;
-        s.lMat.opacity = 0.30 * fade;
-        for (const o of s.parts) {
-          o.visible = true;
-          o.scale.setScalar(radii[i]);
-        }
-      } else {
-        for (const o of s.parts) o.visible = false;
-      }
+      r.mesh.visible = active;
+      if (!active) continue;
+      r.mesh.scale.setScalar(radii[i]);
+      // 最外层 / 最内层各淡出两层，相位接力发生在不可见处
+      const fade = Math.min(1, Math.max(0, i / 2))
+        * Math.min(1, Math.max(0, (last - i) / 2));
+      r.mat.uniforms.uLayerFade.value = fade;
     }
 
     // rig.updateCamera 只改了 position/quaternion，renderer.render 才会刷新

@@ -11,7 +11,7 @@ import {
   C_KM_S, KM_PER_AU, KM_PER_UNIT, AU_UNIT,
   UNITS_PER_LIGHT_SEC, LIGHT_SEC_PER_AU,
   SECONDS_PER_DAY, TIME_RATES, TIME_RATE_DEFAULT,
-  PULSE_EVERY_REAL_SEC, MAX_PULSES, PULSE_FALLBACK_SEC,
+  PULSE_INTERVAL_LIGHT_SEC, MAX_PULSES, PULSE_FALLBACK_SEC,
 } from "../assets/solar/config.js";
 import { SUN_CFG, PLANETS } from "../assets/solar/bodies.js";
 import { orbitalPosition } from "../assets/solar/orbit-math.js";
@@ -126,37 +126,34 @@ test("时间格式化", () => {
   assert.equal(formatLightTime(15005), "4 小时 10 分 5 秒");
 });
 
-test("脉冲波纹：连续相位，球层平滑推进、无每秒重排", () => {
-  const step = 600;
-  assert.equal(PULSE_EVERY_REAL_SEC, 1);
+test("波纹严格以光速扩散：Δt=1 光秒，每层半径增加 c·1", () => {
+  assert.equal(PULSE_INTERVAL_LIGHT_SEC, 5);
   assert.equal(MAX_PULSES, 32);
-
-  const r = pulseRadii(15005, step);
-  assert.equal(r.length, MAX_PULSES, "层数恒定，不再随 floor(t/step) 变化");
-  assert.ok(close(r[0], frontRadius(15005), 1e-9), "radii[0] 恒为主波前");
-  for (let i = 1; i < r.length; i++) {
-    assert.ok(r[i] <= r[i - 1] + 1e-9, `第 ${i} 层由大到小`);
+  const step = 5;
+  const a = pulseRadii(1000, step);
+  const b = pulseRadii(1001, step);
+  assert.equal(a.length, MAX_PULSES, "层数恒定");
+  for (let i = 0; i < MAX_PULSES - 2; i++) {
+    // 跳过最内层（半径受日面半径下限 clamp）
+    assert.ok(close(b[i] - a[i], UNITS_PER_LIGHT_SEC, 1e-9),
+      `第 ${i} 层应以光速推进，实际 ${b[i] - a[i]}`);
   }
-  assert.ok(r[r.length - 1] < frontRadius(15005) * 0.1, "最内层接近日面");
-
-  // 相邻很近的两个时刻：所有球层只发生极小位移，不再每秒整体重排一次
-  const a = pulseRadii(10000, step);
-  const b = pulseRadii(10000.05, step);
-  for (let i = 0; i < MAX_PULSES; i++) {
-    assert.ok(Math.abs(b[i] - a[i]) < 0.01, `第 ${i} 层应平滑，实际差 ${b[i] - a[i]}`);
-  }
-  assert.deepEqual(pulseRadii(4321, step), pulseRadii(4321, step));
+  // 球层由大到小
+  for (let i = 1; i < a.length; i++) assert.ok(a[i] <= a[i - 1] + 1e-9);
 });
 
-test("波纹相位按真实时间推进，与倍率无关", () => {
-  const lightSec = 15005;
-  for (const rate of [1, 60, 600, 3600]) {
-    const radii = pulseRadii(lightSec, rate);
-    assert.equal(radii.length, MAX_PULSES, `rate=${rate} 层数`);
-    assert.ok(close(radii[0], frontRadius(lightSec), 1e-9));
-    assert.ok(radii[radii.length - 1] < radii[0], "半径覆盖整个传播过程");
+test("波纹按固定光秒间隔，与观看倍率无关", () => {
+  // 不同的物理间隔下，每层仍严格以 c 推进（不再乘 rateSec 或归一化到主波前）
+  for (const step of [5, 60, 600]) {
+    const a = pulseRadii(1000, step);
+    const b = pulseRadii(1001, step);
+    assert.equal(a.length, MAX_PULSES, `step=${step} 层数`);
+    for (let i = 0; i < MAX_PULSES - 2; i++) {
+      assert.ok(close(b[i] - a[i], UNITS_PER_LIGHT_SEC, 1e-9),
+        `step=${step} 第 ${i} 层应以光速推进`);
+    }
   }
-  assert.equal(pulseRadii(lightSec, 2592000).length, MAX_PULSES);
+  assert.deepEqual(pulseRadii(4321, 5), pulseRadii(4321, 5));
 });
 
 test("非法间隔与负光行时不产生 NaN", () => {
@@ -165,8 +162,9 @@ test("非法间隔与负光行时不产生 NaN", () => {
   assert.ok(a.every(Number.isFinite));
   assert.equal(a.length, pulseRadii(1200, PULSE_FALLBACK_SEC).length);
 
-  const b = pulseRadii(-100, 600);
+  const b = pulseRadii(-100, 5);
   assert.equal(b.length, MAX_PULSES);
   assert.ok(b.every(Number.isFinite));
-  assert.ok(close(b[0], frontRadius(0), 1e-9));
+  // t=0 时所有球层都退到日面半径
+  assert.ok(close(b[0], SUN_CFG.radius, 1e-9));
 });

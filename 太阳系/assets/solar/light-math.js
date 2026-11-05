@@ -37,13 +37,11 @@ export function frontRadius(lightSec) {
 }
 
 /* ---------- 脉冲波纹 ----------
-   脉冲按「现实时间」每一秒一次：在模拟时间轴上相邻脉冲相差
-   intervalSec = rateSec × 真实间隔 模拟秒，所以倍率变化时脉冲频率不变。
-   球层没有身份，用连续相位 phase = (t / step) mod 1 让它们平滑向外
-   推进并逐层接力；两端由 light-view 做淡入淡出，因此相位循环时不会
-   出现整体跳变。旧版按 floor(t/step) 离散抽样，1:1 下 n 每秒才 +1，
-   整个球阵每秒重排一次 —— 就是「心跳式抖动」而不是波纹。
-   radii[0] 恒为主波前（半径固定、带经纬网），其余由大到小连续滑动。
+   脉冲间隔 step 是固定的「光秒」物理量（默认 5 光秒），与观看倍率无关。
+   球层 k 的半径 = c·((limit-1-k+phase)·step)，phase = (t/step) mod 1
+   连续滑动。age 随 t 线性增长且系数恰为 1，所以 dR/dt = c —— 波纹严格
+   以光速向外扩散。旧版按主波前归一化成 R·f，dR/dt 是 c 的若干倍，
+   看起来明显超光速。相位循环处逐层接力，两端由 light-view 淡入淡出。
    纯函数 → 截图可复现。 */
 export function pulseRadii(lightSec, intervalSec = PULSE_FALLBACK_SEC,
                            maxCount = MAX_PULSES) {
@@ -51,12 +49,14 @@ export function pulseRadii(lightSec, intervalSec = PULSE_FALLBACK_SEC,
     ? intervalSec : PULSE_FALLBACK_SEC;
   const t = Number.isFinite(lightSec) ? Math.max(0, lightSec) : 0;
   const limit = Math.max(2, Math.floor(maxCount) || MAX_PULSES);
-  const R = frontRadius(t);
+  const R = frontRadius(t);                        // 光实际走到的最远处
   const phase = (t / step) % 1;
-  const radii = [R];
-  for (let i = 1; i < limit; i++) {
-    const f = (limit - 1 - i + phase) / (limit - 1);   // 由大到小、连续滑动
-    radii.push(frontRadius(t * f));                     // 年龄 = t·f，半径 = c·t·f
+  const radii = [];
+  for (let k = 0; k < limit; k++) {
+    const age = (limit - 1 - k + phase) * step;   // 已传播光秒，由大到小
+    // 上限截断：光还没走到那么远时不该已有球壳。R 与 c·age 的 d/dt 都是 c，
+    // 取 min 后仍严格以光速扩散。
+    radii.push(Math.min(frontRadius(age), R));
   }
   return radii;
 }

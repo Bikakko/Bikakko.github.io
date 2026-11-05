@@ -107,8 +107,8 @@ export function createLightHud({ hud, lightView }) {
 
   function tick() {
     if (!on) return;
-    // 脉冲间隔按「每真实 1 秒」换算：1 真实秒推进 rateSec 模拟秒
-    lightView.update(getLightSec(), hud.getSimTime(), hud.getRate());
+    // 脉冲间隔是固定光秒（物理量），与倍率无关
+    lightView.update(getLightSec(), hud.getSimTime());
     render();
   }
 
