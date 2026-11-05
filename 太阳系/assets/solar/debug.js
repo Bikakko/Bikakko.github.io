@@ -41,8 +41,12 @@ export function installDebug({ space, rig, hud, camera }) {
     setAngle(name, deg) {
       const p = planets.find(x => x.cfg.name === name);
       if (!p) return false;
-      const M = (p.cfg.meanLonDeg - p.cfg.varpiDeg) * DEG
-              + (TAU / p.cfg.orbitDays) * hud.getSimTime();
+      // 与 orbit-math 一致：M = L(T) − ϖ(T)，不再用固定恒星周期叠加相位
+      const T = hud.getSimTime() / 36525;
+      const r = p.cfg.rates || {};
+      const L = p.cfg.meanLonDeg + (r.meanLonDegPerCentury || 0) * T;
+      const varpi = p.cfg.varpiDeg + (r.varpiDegPerCentury || 0) * T;
+      const M = (L - varpi) * DEG;
       p.cfg.mAnomalyBias = deg * DEG - M;
       return true;
     },

@@ -168,3 +168,27 @@ test("卫星数是 2026-11 的权威快照", () => {
     if (p.moons > 0) assert.equal(p.moonsAsOf, "2026-11");
   }
 });
+
+test("八大行星带 JPL Table 1 每世纪速率，且与恒星周期自洽", () => {
+  const KEYS = [
+    "aPerCentury", "ePerCentury", "incDegPerCentury",
+    "meanLonDegPerCentury", "varpiDegPerCentury", "nodeDegPerCentury",
+  ];
+  for (const cfg of PLANETS) {
+    const r = cfg.rates;
+    assert.ok(r, `${cfg.name} 缺少长期项`);
+    for (const k of KEYS) assert.ok(Number.isFinite(r[k]), `${cfg.name}.${k}`);
+
+    // L̇ 已含平运动：由它反推的恒星周期应与 Table 1 的 orbitDays 一致，
+    // 这是速率数值与既有权威要素相互独立的交叉校验。
+    const period = 360 / (r.meanLonDegPerCentury / 36525);
+    assert.ok(Math.abs(period - cfg.orbitDays) / cfg.orbitDays < 0.002,
+      `${cfg.name} L̇ 与周期不一致：${period} vs ${cfg.orbitDays}`);
+  }
+  // 权威快照：水星平黄经速率、地球近日点进动、海王星节点速率
+  const get = (name) => PLANETS.find(p => p.name === name).rates;
+  assert.equal(get("水星").meanLonDegPerCentury, 149472.67411175);
+  assert.equal(get("地球").varpiDegPerCentury, 0.32327364);
+  assert.equal(get("海王星").nodeDegPerCentury, -0.00508664);
+  assert.equal(get("地球").nodeDegPerCentury, 0.0);
+});

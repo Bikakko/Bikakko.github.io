@@ -3,13 +3,17 @@
    星空、太阳、行星、轨道、土星环、月球
    - 每个天体的数据与专属参数在 bodies.js 中按天体分段
    - 行星表面：着色器程序化噪声，不加载任何贴图
+   - 自定义 ShaderMaterial 都注入对数深度片段，与内建材质共用同一深度编码
    ============================================================ */
 import * as THREE from "three";
 import { PLANETS, SUN_CFG } from "./bodies.js";
-import { TAU, kmToUnit } from "./config.js";
-import { NOISE_GLSL, makePlanetMaterial } from "./shaders.js";
+import { TAU, kmToUnit, qT } from "./config.js";
+import {
+  NOISE_GLSL, makePlanetMaterial,
+  LOGDEPTH_PARS_VERT, LOGDEPTH_VERT, LOGDEPTH_PARS_FRAG, LOGDEPTH_FRAG,
+} from "./shaders.js";
 import { makeMinDot } from "./dots.js";
-import { orbitalPointAtE } from "./orbit-math.js";
+import { orbitalPointAtE, barycenterCorrectedPosition } from "./orbit-math.js";
 import { makePose } from "./pose.js";
 
 /* ============================================================
@@ -63,6 +67,7 @@ function buildStars(renderer) {
       uniform float uPixel;
       varying vec3 vCol;
       varying float vA;
+      ${LOGDEPTH_PARS_VERT}
       void main() {
         vCol = aColor;
         vec4 mv = modelViewMatrix * vec4(position, 1.0);
@@ -70,17 +75,20 @@ function buildStars(renderer) {
         // 轻微闪烁
         vA = 0.55 + 0.45 * sin(uTime * 1.4 + aSeed * 62.0);
         gl_PointSize = aSize * uPixel;
+        ${LOGDEPTH_VERT}
       }
     `,
     fragmentShader: /* glsl */ `
       varying vec3 vCol;
       varying float vA;
+      ${LOGDEPTH_PARS_FRAG}
       void main() {
         vec2 uv = gl_PointCoord - 0.5;
         float d = length(uv);
         if (d > 0.5) discard;
         float a = pow(smoothstep(0.5, 0.0, d), 1.6);
         gl_FragColor = vec4(vCol, a * vA);
+        ${LOGDEPTH_FRAG}
       }
     `,
   });
@@ -100,10 +108,12 @@ function buildSun(sunUniforms, sunGroup) {
     vertexShader: /* glsl */ `
       varying vec3 vN;
       varying vec3 vPos;
+      ${LOGDEPTH_PARS_VERT}
       void main() {
         vN = normalize(normalMatrix * normal);
         vPos = position;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        ${LOGDEPTH_VERT}
       }
     `,
     fragmentShader: /* glsl */ `
@@ -111,6 +121,7 @@ function buildSun(sunUniforms, sunGroup) {
       uniform float uProx;   // 0 = 远观, 1 = 贴近（由主循环按相机距离写入）
       varying vec3 vN;
       varying vec3 vPos;
+      ${LOGDEPTH_PARS_FRAG}
       ${NOISE_GLSL}
       void main() {
         // 表面颗粒 + 缓慢流动
@@ -146,6 +157,7 @@ function buildSun(sunUniforms, sunGroup) {
         vec3 outc = col * (2.4 + 0.9 * uProx) * 1.4;
         outc = vec3(1.0) - exp(-outc);
         gl_FragColor = vec4(outc, 1.0);
+        ${LOGDEPTH_FRAG}
       }
     `,
   });
@@ -168,9 +180,11 @@ function buildCorona(radius, opacity, color, sunUniforms) {
     blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */ `
       varying vec2 vUv;
+      ${LOGDEPTH_PARS_VERT}
       void main() {
         vUv = uv;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        ${LOGDEPTH_VERT}
       }
     `,
     fragmentShader: /* glsl */ `
@@ -179,6 +193,7 @@ function buildCorona(radius, opacity, color, sunUniforms) {
       uniform float uTime;
       uniform float uProx;
       varying vec2 vUv;
+      ${LOGDEPTH_PARS_FRAG}
       void main() {
         float d = length(vUv - 0.5) * 2.0;
         // 内实外虚
@@ -187,6 +202,7 @@ function buildCorona(radius, opacity, color, sunUniforms) {
         // 贴近时收弱光晕，避免近距离观测被加性光雾糊满屏（保留少许热雾）
         a *= mix(1.0, 0.25, uProx);
         gl_FragColor = vec4(uColor, a * uOpacity);
+        ${LOGDEPTH_FRAG}
       }
     `,
   });
@@ -204,10 +220,26 @@ function makeOrbitLine(cfg) {
   const SEG = 8192;
   const pts = [];
   const v = new THREE.Vector3();
-  for (let i = 0; i <= SEG; i++) {
-    orbitalPointAtE(cfg, (i / SEG) * TAU, v);
-    pts.push(v.clone());
+  const T = qT / 36525;
+
+  if ((cfg.satellites || []).length > 0) {
+    // 有卫星的天体（地球）：按时间采样「含地月质心摆动」的真实轨迹，
+    // 而不是把整条质心椭圆按瞬时偏移平移——后者只保证当下穿过本体，
+    // 椭圆其余部分并不等于地球路径。从 ?t= 历元起采一个公转周期，
+    // 静态截图与本体位置严格对齐；播放中摆动相位虽会缓慢错开，
+    // 但幅度恒小于地球半径，不影响判读。
+    for (let i = 0; i <= SEG; i++) {
+      barycenterCorrectedPosition(cfg, qT + (i / SEG) * cfg.orbitDays, v);
+      pts.push(v.clone());
+    }
+  } else {
+    // 无卫星：按偏近点角均匀采样的静态参考椭圆，要素取 ?t= 所在历元
+    for (let i = 0; i <= SEG; i++) {
+      orbitalPointAtE(cfg, (i / SEG) * TAU, v, T);
+      pts.push(v.clone());
+    }
   }
+
   const geo = new THREE.BufferGeometry().setFromPoints(pts);
   const mat = new THREE.LineBasicMaterial({
     color: 0x4a5a80, transparent: true, opacity: 0.34,

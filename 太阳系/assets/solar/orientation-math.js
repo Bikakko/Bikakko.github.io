@@ -74,5 +74,9 @@ export function axisObliquityDeg(cfg, days = 0) {
   );
   const sign = cfg.spin.wRateDegPerDay < 0 ? -1 : 1;
   const axis = { x: pole.x * sign, y: pole.y * sign, z: pole.z * sign };
-  return angularSeparationDeg(axis, orbitNormalEcliptic(cfg.incDeg, cfg.nodeDeg));
+  // 轨道法线同样按当前历元外推，与 orbit-math.elementsAt 保持一致
+  const r = cfg.rates || {};
+  const incDeg = cfg.incDeg + (r.incDegPerCentury || 0) * T;
+  const nodeDeg = cfg.nodeDeg + (r.nodeDegPerCentury || 0) * T;
+  return angularSeparationDeg(axis, orbitNormalEcliptic(incDeg, nodeDeg));
 }

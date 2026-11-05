@@ -167,18 +167,19 @@
   <div class="brand">SO<span>LAR</span></div>
   <div class="sub">程序生成太阳系 · 尺寸与轨道等比例 · J2000 轨道 / IAU 自转要素</div>
   <div class="row">时间 <span class="val" id="simtime">—</span></div>
-  <div class="row">速度 <span class="val" id="speed">1×</span></div>
+  <div class="row">时间流速 <span class="val" id="speed">真实速度</span></div>
   <div class="row" id="fpsRow">帧率 <span class="val" id="fps">—</span></div>
+  <!-- 档位是「每秒推进多少时间」，不是真实速度的倍数；标题写明真实速率 -->
   <div class="ctrl">
-    <button data-sp="0" title="暂停">❚❚</button>
-    <button data-sp="1">1×</button>
-    <button data-sp="2">2×</button>
-    <button data-sp="3">3×</button>
-    <button data-sp="4">4×</button>
-    <button data-sp="5">5×</button>
-    <button data-sp="6">6×</button>
-    <button data-sp="7">7×</button>
-    <button data-sp="8">8×</button>
+    <button data-sp="0" title="暂停 / 继续">❚❚</button>
+    <button data-sp="1" title="真实速度：每秒推进 1 秒">真实</button>
+    <button data-sp="2" title="每秒推进 30 分钟（约真实速度的 1800 倍）">30m</button>
+    <button data-sp="3" title="每秒推进 3 小时">3h</button>
+    <button data-sp="4" title="每秒推进 12 小时">12h</button>
+    <button data-sp="5" title="每秒推进 1.5 天">1.5d</button>
+    <button data-sp="6" title="每秒推进 3 天">3d</button>
+    <button data-sp="7" title="每秒推进 7 天">7d</button>
+    <button data-sp="8" title="每秒推进 30 天">30d</button>
     <button data-home title="回到远景全景">全景</button>
   </div>
 </div>

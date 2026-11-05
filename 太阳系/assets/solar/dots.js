@@ -5,6 +5,7 @@
    不参与比例计算，所以不破坏「真实比例」的前提。
    ============================================================ */
 import * as THREE from "three";
+import { dotPixels, dotAppearance } from "./dot-math.js";
 
 // 所有天体共用一张白色径向渐变贴图，颜色由 material.color 染色，
 // 避免每个天体各建一张 canvas 贴图与材质
@@ -40,4 +41,14 @@ export function makeMinDot(cfg) {
   pts.renderOrder = 2;
   pts.userData = cfg;
   return pts;
+}
+
+// 每帧按「本帧相机」刷新光点：行星/太阳/月球共用同一套公式。
+// worldPos 必须已是世界坐标；viewH 用 CSS 像素（与 material.size 单位一致）。
+export function updateMinDot(dot, worldPos, radius, camera, viewH, style) {
+  const dPx = dotPixels(radius * 2, camera.position.distanceTo(worldPos), camera.fov, viewH);
+  const a = dotAppearance(dPx, style);
+  dot.material.opacity = a.opacity;
+  dot.material.size = a.size;
+  dot.visible = a.visible;
 }

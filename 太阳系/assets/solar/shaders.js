@@ -1,8 +1,37 @@
 /* ============================================================
    太阳系 · Solar · 着色器片段
-   通用噪声（GLSL）与行星表面材质
+   通用噪声（GLSL）、行星表面材质、对数深度片段
    ============================================================ */
 import * as THREE from "three";
+
+/* ------------------------------------------------------------
+   对数深度：与 three.js 内建材质使用同一编码。
+   renderer 开启 logarithmicDepthBuffer 后，近平面最小到 1e-6、
+   远平面 6000（比值 ~6e9），常规深度下远景天体全部被量化到 1.0
+   而被裁掉。自定义 ShaderMaterial 必须自己写 gl_FragDepth；
+   logDepthBufFC 由 three.js 自动注入（= 2 / log2(far + 1)）。
+   ------------------------------------------------------------ */
+export const LOGDEPTH_PARS_VERT = /* glsl */ `
+#ifdef USE_LOGARITHMIC_DEPTH_BUFFER
+  varying float vLogDepth;
+#endif
+`;
+export const LOGDEPTH_VERT = /* glsl */ `
+#ifdef USE_LOGARITHMIC_DEPTH_BUFFER
+  vLogDepth = 1.0 + gl_Position.w;
+#endif
+`;
+export const LOGDEPTH_PARS_FRAG = /* glsl */ `
+#ifdef USE_LOGARITHMIC_DEPTH_BUFFER
+  uniform float logDepthBufFC;
+  varying float vLogDepth;
+#endif
+`;
+export const LOGDEPTH_FRAG = /* glsl */ `
+#ifdef USE_LOGARITHMIC_DEPTH_BUFFER
+  gl_FragDepth = log2(vLogDepth) * logDepthBufFC * 0.5;
+#endif
+`;
 
 export const NOISE_GLSL = /* glsl */ `
   // 3D 值噪声
@@ -50,12 +79,14 @@ export function makePlanetMaterial(cfg) {
       varying vec3 vPos;
       varying vec3 vNormalW;
       varying vec3 vWorldPos;
+      ${LOGDEPTH_PARS_VERT}
       void main() {
         vPos = position;
         vNormalW = normalize(mat3(modelMatrix) * normal);
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vWorldPos = wp.xyz;
         gl_Position = projectionMatrix * viewMatrix * wp;
+        ${LOGDEPTH_VERT}
       }
     `,
     fragmentShader: /* glsl */ `
@@ -71,6 +102,7 @@ export function makePlanetMaterial(cfg) {
       varying vec3 vNormalW;
       varying vec3 vWorldPos;
 
+      ${LOGDEPTH_PARS_FRAG}
       ${NOISE_GLSL}
 
       void main() {
@@ -125,6 +157,7 @@ export function makePlanetMaterial(cfg) {
         vec3 finalCol = col * lightAmt * 1.75 + ambient + rim;
 
         gl_FragColor = vec4(finalCol, 1.0);
+        ${LOGDEPTH_FRAG}
       }
     `,
   });

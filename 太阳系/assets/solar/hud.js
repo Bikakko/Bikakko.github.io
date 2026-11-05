@@ -1,6 +1,6 @@
 /* ============================================================
    太阳系 · Solar · HUD
-   信息卡、速度/暂停、时间与帧率
+   信息卡、时间流速/暂停、时间与帧率
    ============================================================ */
 import { qT, qStatic } from "./config.js";
 
@@ -9,8 +9,13 @@ export function createHud({ onHome }) {
   let speedLevel = 1;
   let userPaused = false;
   const pausedNow = () => userPaused;
-  // 档位 → 每真实秒推进多少「天」：1× 为现实速度，2×–8× 按小时换算
+  // 档位 → 每真实秒推进多少「天」：1× 为现实速度，2×–8× 是「每秒推进
+  // 多少分钟/小时/天」，并非真实速度的线性倍数（按钮与读数都如实标注速率）。
   const DAYS_PER_SEC = [0, 1 / 86400, 0.5 / 24, 3 / 24, 12 / 24, 36 / 24, 72 / 24, 168 / 24, 720 / 24];
+  const RATE_LABELS = [
+    "", "真实速度", "30 分钟/秒", "3 小时/秒", "12 小时/秒",
+    "1.5 天/秒", "3 天/秒", "7 天/秒", "30 天/秒",
+  ];
   let fpsAcc = 0, frames = 0;
 
   const fpsEl = document.getElementById("fps");
@@ -44,10 +49,10 @@ export function createHud({ onHome }) {
     infoEl.classList.remove("on");
   }
 
-  /* ---------- 速度 / 暂停 ---------- */
+  /* ---------- 时间流速 / 暂停 ---------- */
   function renderSpeed() {
     const paused = pausedNow();
-    speedEl.textContent = speedLevel + "×" + (paused ? " ⏸" : "");
+    speedEl.textContent = RATE_LABELS[speedLevel] + (paused ? " ⏸" : "");
     for (const b of document.querySelectorAll(".ctrl button")) {
       if (b.dataset.sp === undefined) continue;
       const bv = parseFloat(b.dataset.sp);

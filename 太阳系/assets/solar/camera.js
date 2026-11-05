@@ -7,7 +7,9 @@
 import * as THREE from "three";
 import { PLANETS, MOON_CFG, SUN_CFG } from "./bodies.js";
 import { qAz, qEl, qDist } from "./config.js";
-import { hasDragged, pinchZoomDistance } from "./camera-math.js";
+import {
+  hasDragged, pinchZoomDistance, MIN_PHI, maxPhiForDistance, keyboardMoveMode,
+} from "./camera-math.js";
 
 export function createCameraRig({ canvas, camera, space, hud }) {
   const { planets, focusables, clickable, moonMesh, sunGroup } = space;
@@ -49,12 +51,10 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   }
 
   // 关键：远景时上限卡在水平面之前，不钻到轨道面下方；
-  // 近距离观测时放开到可以看星球底面（随距离平滑过渡）
-  const MIN_PHI = 0.10, MAX_PHI = Math.PI * 0.495;
-  const MAX_PHI_UNDER = Math.PI * 0.95;
+  // 近距离观测时放开到可以看星球底面（随距离平滑过渡）。
+  // 曲线与夹取判据抽到 camera-math.js，便于单测与逐帧重夹。
   function maxPhi() {
-    const t = Math.min(1, Math.max(0, (10 - orbit.dist) / 8));   // 10→2 之间过渡
-    return MAX_PHI + (MAX_PHI_UNDER - MAX_PHI) * t;
+    return maxPhiForDistance(orbit.dist);
   }
   // 自由视角下限：贴到太阳半径附近即可，不再用与尺度无关的 0.6
   const PANORAMA_MIN_DIST = 0.05;
@@ -718,18 +718,23 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     const f = (moveKeys.has("KeyW") ? 1 : 0) - (moveKeys.has("KeyS") ? 1 : 0);
     const r = (moveKeys.has("KeyD") ? 1 : 0) - (moveKeys.has("KeyA") ? 1 : 0);
     if (!f && !r) return;
-    if (focusFlight || zoomRefDist > 0 || orbit.tDist !== orbit.dist) takeOverCamera();
+
+    // 聚焦过渡中忽略按键（中途取消会让镜头停在半途且仍显示「已聚焦」）；
+    // 聚焦态一律环绕，绝不走平移分支（panOffset 累积会把镜头带离行星）。
+    const mode = keyboardMoveMode({ isFocused: !!focusTarget, isFlying: !!focusFlight });
+    if (mode === "ignore") return;
+    if (zoomRefDist > 0 || orbit.tDist !== orbit.dist) takeOverCamera();
     zoomAnchorObj = null;
     viewTouched = true;
 
-    // 近距离聚焦时改为环绕天体：既不会把相机推进球体，也始终对准星球
-    if (focusTarget && orbit.dist < focusTarget.cfg.radius * 30) {
+    // 环绕天体：既不会把相机推进球体，也始终对准星球
+    if (mode === "orbit") {
       orbit.tTheta -= r * 1.0 * dt;
       orbit.tPhi = Math.min(maxPhi(), Math.max(MIN_PHI, orbit.tPhi - f * 0.6 * dt));
       return;
     }
 
-    // 远距离/自由视角：沿当前视角水平前向/右向平移目标点
+    // 自由视角：沿当前视角水平前向/右向平移目标点
     _moveFwd.set(-Math.sin(orbit.theta), 0, -Math.cos(orbit.theta));
     _moveRight.set(Math.cos(orbit.theta), 0, -Math.sin(orbit.theta));
     _moveStep.set(0, 0, 0).addScaledVector(_moveFwd, f).addScaledVector(_moveRight, r);
@@ -751,6 +756,10 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     // 差一帧就会让锚点每帧漂一点；连续滚动时每格都在滑行中途重新锚定，
     // 误差被逐格继承、累积成几十像素的可见偏移。
     // 距离在对数空间缓动：跨 6 个数量级时，线性缓动前段瞬移、末段几乎不动
+    // 仰角每帧按「本帧距离」重夹目标值：近距离钻到黄道面下方是允许的，
+    // 但拉远后必须平滑回到上方，否则「远景不低于黄道面」的不变量会失效。
+    // 只夹 tPhi、靠已有缓动把 phi 带回来，避免视角瞬间跳变。
+    orbit.tPhi = Math.min(maxPhi(), Math.max(MIN_PHI, orbit.tPhi));
     const k = 1 - Math.pow(0.0009, dt);
     orbit.theta += (orbit.tTheta - orbit.theta) * k;
     orbit.phi   += (orbit.tPhi   - orbit.phi)   * k;
