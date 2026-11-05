@@ -43,6 +43,29 @@ export function frontRadius(lightSec) {
   return Math.max(SUN_CFG.radius, Math.max(0, lightSec) * UNITS_PER_LIGHT_SEC);
 }
 
+// 视线与「以世界原点为球心、半径 R」的波前球求交。
+// 这是 light-view.js 片元着色器的 JS 参考实现，供单测校验：
+// 旧实现用球面法线 fresnel，相机进入球壳后 |dot(N,V)|≈1 会让整球消失，
+// 且亮度随 |camPos|/R 剧烈变化。改用切向判据后与相机位置完全解耦。
+// grazing：0 = 擦过球壳轮廓（环最亮），1 = 正对球心（环不亮）。
+export function wavefrontGrazing(camPos, dir, R) {
+  const b = camPos.x * dir.x + camPos.y * dir.y + camPos.z * dir.z;
+  const c2 = camPos.x * camPos.x + camPos.y * camPos.y + camPos.z * camPos.z - R * R;
+  const disc = b * b - c2;
+  const sq = Math.sqrt(Math.max(disc, 0));
+  const tNear = -b - sq;
+  const inside = c2 <= 0;
+  // 与片元着色器一致：视线未与球相交时 grazing 置 1（环外）；
+  // 波前已包裹相机时不画环，只留余辉。切向时 disc≈0，给一点浮点容差。
+  const intersects = disc > -1e-9 * Math.max(R * R, 1);
+  const grazing = intersects ? Math.min(1, Math.max(0, sq / Math.max(R, 1e-6))) : 1;
+  return {
+    grazing,
+    hit: intersects && tNear >= 0 && !inside,
+    inside,
+  };
+}
+
 const _v = {
   x: 0, y: 0, z: 0,
   set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; },

@@ -49,7 +49,7 @@ const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.5, 60
 
 const space = createSpace(scene, renderer);
 // 光速视觉层必须在 renderer.compile 之前加入场景，着色器才会预编译
-const lightView = createLightView(scene);
+const lightView = createLightView(scene, camera);
 const {
   stars, sunUniforms, sunRecord, coronas, sunDot,
   planets, moonMesh, moonDot,

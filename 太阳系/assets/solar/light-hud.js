@@ -6,7 +6,7 @@
    ============================================================ */
 import {
   qLight, qLightRate, qLightT, qLightMode, qLightStatic,
-  LIGHT_RATE_DEFAULT,
+  LIGHT_RATE_DEFAULT, LIGHT_RATE_REALTIME,
 } from "./config.js";
 import {
   lightArrivals, formatClock, formatShort, formatLightTime,
@@ -92,7 +92,8 @@ export function createLightHud({ hud, lightView }) {
 
     let passed = 0;
     for (const a of arrivals) if (a.seconds <= lightSec) passed++;
-    subEl.textContent = `${desc} · 已越过 ${passed}/8`;
+    const insideHint = lightView.isInside() ? " · 光波已越过观察点" : "";
+    subEl.textContent = `${desc} · 已越过 ${passed}/8${insideHint}`;
     for (const r of listRecs) r.el.classList.toggle("done", r.seconds <= lightSec);
     for (const r of markerRecs) r.el.classList.toggle("done", r.seconds <= lightSec);
 
@@ -102,7 +103,8 @@ export function createLightHud({ hud, lightView }) {
     modeBtn.classList.toggle("on", mode === "log");
     for (const b of rateBtns) b.classList.toggle("on", parseFloat(b.dataset.lrate) === rate);
 
-    if (subHeader) subHeader.textContent = `${originalSub} · 光速回放 ${rate}×（c 恒定）`;
+    const rateLabel = rate === LIGHT_RATE_REALTIME ? "真实时间 1:1" : `${rate}×`;
+    if (subHeader) subHeader.textContent = `${originalSub} · 光速回放 ${rateLabel}（c 恒定）`;
   }
 
   function tick(dt) {

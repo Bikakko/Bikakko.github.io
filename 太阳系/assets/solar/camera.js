@@ -59,6 +59,8 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   // 自由视角下限：贴到太阳半径附近即可，不再用与尺度无关的 0.6
   const PANORAMA_MIN_DIST = 0.05;
   let MAX_DIST = 1200;
+  // 显式 ?dist= 是截图参数：resize（含截图时的视口初始化）不应把它弹回全景
+  const distExplicit = qDist !== null;
 
   // 没显式指定 dist 时，用视口自适应距离；显式指定也要夹进合法区间
   if (qDist === null) {
@@ -855,7 +857,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   function onResize() {
     MAX_DIST = Math.max(1200, fitDistance() * 2.2);
     if (orbit.tDist > MAX_DIST) orbit.tDist = MAX_DIST;
-    if (!viewTouched && !focusTarget) orbit.tDist = fitDistance();
+    if (!viewTouched && !focusTarget && !distExplicit) orbit.tDist = fitDistance();
   }
 
   return {

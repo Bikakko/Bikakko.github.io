@@ -4,11 +4,12 @@ import {
   lightTimeSeconds, frontRadius, lightArrivals, lightSecondsPerAU,
   toLogAxis, fromLogAxis, advanceLightTime,
   formatClock, formatShort, formatLightTime,
-  LOG_AXIS_MIN, LOG_AXIS_MAX, LIGHT_TICKS,
+  LOG_AXIS_MIN, LOG_AXIS_MAX, LIGHT_TICKS, wavefrontGrazing,
 } from "../assets/solar/light-math.js";
 import {
   C_KM_S, KM_PER_AU, KM_PER_UNIT, AU_UNIT,
   UNITS_PER_LIGHT_SEC, LIGHT_SEC_PER_AU,
+  LIGHT_RATES, LIGHT_RATE_REALTIME,
 } from "../assets/solar/config.js";
 import { SUN_CFG, PLANETS } from "../assets/solar/bodies.js";
 import { orbitalPosition } from "../assets/solar/orbit-math.js";
@@ -105,4 +106,54 @@ test("时间格式化", () => {
   assert.equal(formatShort(4577), "1h16m");
   assert.equal(formatLightTime(499), "8 分 19 秒");
   assert.equal(formatLightTime(15005), "4 小时 10 分 5 秒");
+});
+
+test("真实时间 1:1 档位：1 秒推进 1 光秒，c 不变", () => {
+  assert.equal(LIGHT_RATE_REALTIME, 1);
+  assert.ok(LIGHT_RATES.includes(1));
+  assert.equal(advanceLightTime(0, 1, LIGHT_RATE_REALTIME, "linear"), 1);
+  assert.equal(advanceLightTime(100, 2.5, 1, "linear"), 102.5);
+  // 1:1 下走过 1 AU 需要 499 秒真实时间
+  assert.ok(close(advanceLightTime(0, LIGHT_SEC_PER_AU, 1, "linear"), LIGHT_SEC_PER_AU, 1e-9));
+  assert.equal(C_KM_S, 299792.458);
+});
+
+test("波前环的切向判据与相机距离无关（修复推拉镜头时忽明忽暗）", () => {
+  const R = 10;
+  for (const d of [12, 20, 100, 923]) {
+    // 与半径 R 的球正好相切的视线方向
+    const alpha = Math.asin(R / d);
+    const dir = { x: -Math.cos(alpha), y: Math.sin(alpha), z: 0 };
+    const g = wavefrontGrazing({ x: d, y: 0, z: 0 }, dir, R);
+    assert.ok(g.grazing < 1e-6, `d=${d} 切向应 grazing≈0，实际 ${g.grazing}`);
+    assert.equal(g.inside, false);
+
+    // 正对球心时环不亮，同样与距离无关
+    const front = wavefrontGrazing({ x: d, y: 0, z: 0 }, { x: -1, y: 0, z: 0 }, R);
+    assert.ok(close(front.grazing, 1, 1e-9), `d=${d} 正对应 grazing=1`);
+    assert.equal(front.hit, true);
+  }
+});
+
+test("相机绕太阳换方位，波前判据同样稳定（修复转动镜头时错位）", () => {
+  const R = 10, d = 30;
+  for (const ang of [0, 0.7, 1.9, 3.5, 5.0]) {
+    const cam = { x: d * Math.cos(ang), y: 0, z: d * Math.sin(ang) };
+    const toCenter = { x: -Math.cos(ang), y: 0, z: -Math.sin(ang) };
+    const g = wavefrontGrazing(cam, toCenter, R);
+    assert.ok(close(g.grazing, 1, 1e-9), `ang=${ang}`);
+    assert.equal(g.hit, true);
+    assert.equal(g.inside, false);
+  }
+});
+
+test("相机进入波前内部时不再画环，切换到余辉状态", () => {
+  const R = 10;
+  const inside = wavefrontGrazing({ x: 5, y: 0, z: 0 }, { x: 1, y: 0, z: 0 }, R);
+  assert.equal(inside.inside, true);
+  assert.equal(inside.hit, false, "波前已越过相机，环不应再绘制");
+
+  const outside = wavefrontGrazing({ x: 20, y: 0, z: 0 }, { x: -1, y: 0, z: 0 }, R);
+  assert.equal(outside.hit, true);
+  assert.equal(outside.inside, false);
 });

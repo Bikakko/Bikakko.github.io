@@ -44,7 +44,9 @@ export const C_KM_S              = 299792.458;
 export const UNITS_PER_LIGHT_SEC = C_KM_S / KM_PER_UNIT;   // 世界单位 / 光秒
 export const LIGHT_SEC_PER_AU    = KM_PER_AU / C_KM_S;     // ≈ 499.005 s
 export const LIGHT_RATE_DEFAULT  = 600;                    // 600 光秒 / 真实秒
-export const LIGHT_RATES         = [60, 600, 3600];
+// 1 = 真实时间 1 秒 : 1 光秒（光走 4 小时到海王星就要等 4 小时）
+export const LIGHT_RATE_REALTIME = 1;
+export const LIGHT_RATES         = [1, 60, 600, 3600];
 
 /* ---------- 光速查询参数（与其它 ?参数 同样用于复现截图） ---------- */
 export const qLight       = Q.get("light") === "1";
