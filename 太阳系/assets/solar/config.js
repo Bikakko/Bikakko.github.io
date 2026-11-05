@@ -34,3 +34,27 @@ export const kmToUnit     = (km) => (km / KM_PER_UNIT) * RADIUS_SCALE;
 export const AU_TO_UNIT   = (au) => au * AU_UNIT;
 export const TAU          = Math.PI * 2;
 export const DEG          = Math.PI / 180;
+
+// ============================================================
+//  光速基准（严格等比例，不引入新单位）
+//  c 恒为真空光速；「回放倍率」只改变观看节奏，从不改变 c。
+//  光行时按太阳中心 → 天体的距离计算，与 1 AU = 8 分 19 秒一致。
+// ============================================================
+export const C_KM_S              = 299792.458;
+export const UNITS_PER_LIGHT_SEC = C_KM_S / KM_PER_UNIT;   // 世界单位 / 光秒
+export const LIGHT_SEC_PER_AU    = KM_PER_AU / C_KM_S;     // ≈ 499.005 s
+export const LIGHT_RATE_DEFAULT  = 600;                    // 600 光秒 / 真实秒
+export const LIGHT_RATES         = [60, 600, 3600];
+
+/* ---------- 光速查询参数（与其它 ?参数 同样用于复现截图） ---------- */
+export const qLight       = Q.get("light") === "1";
+export const qLightRate   = (() => {
+  const v = numParam("lrate");
+  return v !== null && v > 0 ? v : LIGHT_RATE_DEFAULT;
+})();
+export const qLightT      = (() => {
+  const v = numParam("lt");
+  return v !== null && v >= 0 ? v : null;
+})();
+export const qLightMode   = Q.get("lmode") === "log" ? "log" : "linear";
+export const qLightStatic = qStatic || Q.get("lstatic") === "1";

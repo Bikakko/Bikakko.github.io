@@ -8,7 +8,7 @@ import {
   AU_UNIT, KM_PER_UNIT, RADIUS_SCALE, TAU, DEG,
 } from "./config.js";
 
-export function installDebug({ space, rig, hud, camera }) {
+export function installDebug({ space, rig, hud, camera, lightHud }) {
   const { planets } = space;
   const orbit = rig.orbit;
 
@@ -52,6 +52,12 @@ export function installDebug({ space, rig, hud, camera }) {
     },
     get sunRadius() { return SUN_CFG.radius; },
     get simTime() { return hud.getSimTime(); },
+    // 光速时钟探针：用于验证 ?light=1&lt= 截图复现与回放状态
+    get light() {
+      return lightHud
+        ? { on: lightHud.isOn(), seconds: +lightHud.getLightSec().toFixed(2) }
+        : null;
+    },
     // 光标缩放探针：返回光标下目标平面点的世界坐标
     probe(x, y) {
       camera.updateMatrixWorld();

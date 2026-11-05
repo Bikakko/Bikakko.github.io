@@ -135,6 +135,97 @@
     .lbl em { display: none; }
   }
 
+  /* 光速面板：HUD 底部的独立小面板 + 对数光时标尺 */
+  .light-toggle {
+    margin-top: 9px; font: inherit; font-size: 10px; letter-spacing: 0.08em;
+    padding: 4px 10px; color: #8e9cbe; background: rgba(10, 16, 28, 0.72);
+    border: 1px solid rgba(110, 140, 195, 0.24); border-radius: 5px;
+    cursor: pointer; pointer-events: auto; -webkit-tap-highlight-color: transparent;
+  }
+  .light-toggle:hover, .light-toggle.on {
+    color: #ffd9a0; border-color: rgba(255, 200, 120, 0.62);
+    background: rgba(48, 36, 18, 0.8);
+  }
+  .light {
+    position: fixed; left: 22px; bottom: 20px; z-index: 5;
+    width: 340px; max-width: calc(100vw - 44px);
+    padding: 12px 14px 11px;
+    border: 1px solid rgba(120, 150, 200, 0.22); border-radius: 9px;
+    background: rgba(8, 12, 22, 0.82);
+    -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+    color: #c9d6ec; font-size: 11px; line-height: 1.7;
+    opacity: 0; transform: translateY(8px); pointer-events: none;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+  }
+  .light.on { opacity: 1; transform: none; pointer-events: auto; }
+  .static .light { transition: none !important; transform: none; }
+  .light-title { font-size: 12px; letter-spacing: 0.16em; color: #fff; }
+  .light-badge {
+    float: right; font-size: 9px; letter-spacing: 0.05em; color: #ffd9a0;
+    border: 1px solid rgba(255, 200, 120, 0.45); border-radius: 3px; padding: 0 5px;
+  }
+  .light-clock {
+    font-size: 22px; letter-spacing: 0.1em; color: #ffd9a0; margin-top: 2px;
+    font-variant-numeric: tabular-nums;
+  }
+  .light-sub { color: #6b7899; font-size: 10px; margin-bottom: 8px; }
+  .light-bar {
+    position: relative; height: 34px; margin: 4px 0 8px;
+    cursor: ew-resize; touch-action: none;
+  }
+  .light-track {
+    position: absolute; left: 0; right: 0; top: 12px; height: 1px;
+    background: rgba(120, 150, 200, 0.35);
+  }
+  .light-fill {
+    position: absolute; left: 0; top: 12px; height: 1px;
+    width: 0; background: #ffcf80;
+  }
+  .light-cursor {
+    position: absolute; top: 6px; left: 0; width: 2px; height: 13px;
+    background: #fff; box-shadow: 0 0 6px #ffcf80; transform: translateX(-1px);
+  }
+  .light-tick {
+    position: absolute; top: 18px; font-size: 9px; color: #5f6c8c;
+    transform: translateX(-50%); white-space: nowrap;
+  }
+  .light-tick::before {
+    content: ""; position: absolute; left: 50%; top: -8px;
+    width: 1px; height: 5px; background: rgba(120, 150, 200, 0.4);
+  }
+  .light-pm {
+    position: absolute; top: 8px; width: 7px; height: 7px; margin-left: -3.5px;
+    border-radius: 50%; background: #4a5a80;
+    border: 1px solid rgba(140, 170, 220, 0.4);
+  }
+  .light-pm.done {
+    background: #ffcf80; border-color: #ffe6b8;
+    box-shadow: 0 0 7px rgba(255, 207, 128, 0.8);
+  }
+  .light-list {
+    display: grid; grid-template-columns: repeat(4, 1fr); gap: 1px 8px;
+    font-size: 10px; color: #6d7c9e; margin-bottom: 9px;
+  }
+  .light-list .v { color: #8794b5; }
+  .light-list .done .v { color: #ffd9a0; }
+  .light-ctrl { display: flex; flex-wrap: wrap; gap: 4px; }
+  .light-ctrl button {
+    font: inherit; font-size: 10px; padding: 3px 7px;
+    color: #8e9cbe; background: rgba(10, 16, 28, 0.72);
+    border: 1px solid rgba(110, 140, 195, 0.24); border-radius: 5px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .light-ctrl button:hover { color: #dce6f5; border-color: rgba(150, 180, 235, 0.5); }
+  .light-ctrl button.on {
+    color: #ffd9a0; border-color: rgba(255, 200, 120, 0.62);
+    background: rgba(48, 36, 18, 0.8);
+  }
+  .light-hint { color: #55627f; font-size: 9px; margin-top: 7px; letter-spacing: 0.02em; }
+  html.light-on .tip { opacity: 0 !important; pointer-events: none; }
+  @media (max-width: 560px) {
+    .light { left: 12px; right: 12px; bottom: 12px; width: auto; max-width: none; padding: 10px 12px; }
+  }
+
   .loader {
     position: fixed; inset: 0; z-index: 9;
     display: flex; align-items: center; justify-content: center;
@@ -182,6 +273,7 @@
     <button data-sp="8" title="每秒推进 30 天">30d</button>
     <button data-home title="回到远景全景">全景</button>
   </div>
+  <button id="lightToggle" class="light-toggle" title="打开光速可视化（L）">光速 ▸</button>
 </div>
 
 <div class="info" id="info">
@@ -203,6 +295,31 @@
   <div><b>点击天体 / 标签</b> 聚焦</div>
   <div><b>Esc / 点空白 / 滚轮拉远</b> 取消聚焦</div>
   <div><b>双击空白 / 全景</b> 回到远景</div>
+  <div><b>L</b> 光速可视化</div>
+</div>
+
+<div class="light" id="light">
+  <div class="light-title">光速 <span class="light-badge">c 恒定</span></div>
+  <div class="light-clock" id="lightClock">00:00:00</div>
+  <div class="light-sub" id="lightSub">—</div>
+  <div class="light-bar" id="lightBar">
+    <div class="light-track"></div>
+    <div class="light-fill" id="lightFill"></div>
+    <div id="lightTicks"></div>
+    <div id="lightPlanets"></div>
+    <div class="light-cursor" id="lightCursor"></div>
+  </div>
+  <div class="light-list" id="lightList"></div>
+  <div class="light-ctrl">
+    <button id="lightPlay">播放</button>
+    <button id="lightReplay">重播</button>
+    <button data-lrate="60">60×</button>
+    <button data-lrate="600">600×</button>
+    <button data-lrate="3600">3600×</button>
+    <button id="lightMode">线性回放</button>
+    <button id="lightClose">关闭</button>
+  </div>
+  <div class="light-hint">回放倍率只改变观看节奏 · 光速恒为 299792.458 km/s · 拖动标尺定位 · P 播放 / R 重播</div>
 </div>
 
 <div class="labels" id="labels"></div>

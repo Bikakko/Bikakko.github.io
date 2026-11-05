@@ -17,6 +17,9 @@ export function createHud({ onHome }) {
     "1.5 天/秒", "3 天/秒", "7 天/秒", "30 天/秒",
   ];
   let fpsAcc = 0, frames = 0;
+  // 光速模式期间冻结公转/自转时钟（光走 4 小时，行星位移 <0.05°）
+  let frozen = false;
+  let lightModeHook = () => false;
 
   const fpsEl = document.getElementById("fps");
   const timeEl = document.getElementById("simtime");
@@ -87,12 +90,15 @@ export function createHud({ onHome }) {
         && e.target.closest("button, a, input, textarea, select, .lbl")) return;
     if (e.code === "ArrowUp")   applySpeed(Math.min(8, speedLevel + 1));
     if (e.code === "ArrowDown") applySpeed(Math.max(1, speedLevel - 1));
-    if (e.code === "Space")     { e.preventDefault(); applySpeed(0); }
+    if (e.code === "Space") {
+      if (lightModeHook()) return;   // 光速模式下空格让位给光时钟
+      e.preventDefault(); applySpeed(0);
+    }
   });
 
   /* ---------- 时间推进与状态显示 ---------- */
   function advance(dt) {
-    if (!qStatic && !pausedNow()) simTime += dt * DAYS_PER_SEC[speedLevel];
+    if (!qStatic && !frozen && !pausedNow()) simTime += dt * DAYS_PER_SEC[speedLevel];
   }
 
   function renderTime() {
@@ -121,5 +127,7 @@ export function createHud({ onHome }) {
     advance, updateHud, applySpeed,
     getSimTime: () => simTime,
     isPaused: pausedNow,
+    freeze: (v) => { frozen = v; },
+    setLightModeHook: (fn) => { lightModeHook = fn; },
   };
 }

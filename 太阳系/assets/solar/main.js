@@ -3,6 +3,7 @@
    - 行星表面：着色器程序化噪声，不加载任何贴图
    - 轨道相机：自实现，远景限制在黄道面上方
    - 触屏：touch-action + 手写 touch 事件
+   - 光速可视化：独立光行时时钟 + 波前球壳（?light=1 / L 键）
    ============================================================ */
 import * as THREE from "three";
 import { Q, qStatic, qFocus, RADIUS_SCALE } from "./config.js";
@@ -13,9 +14,11 @@ import { updateMinDot } from "./dots.js";
 import { createHud } from "./hud.js";
 import { createCameraRig } from "./camera.js";
 import { createLabels } from "./labels.js";
+import { createLightView } from "./light-view.js";
+import { createLightHud } from "./light-hud.js";
 
 // 构建标记：刷新后可在控制台确认运行的是哪一版
-const BUILD = "2026-11-06 · review-fixes";
+const BUILD = "2026-11-06 · light-speed";
 console.info("[solar] build " + BUILD);
 window.__solarBuild = BUILD;
 if (qStatic) document.documentElement.classList.add("static");
@@ -45,6 +48,8 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(48, innerWidth / innerHeight, 0.5, 6000);
 
 const space = createSpace(scene, renderer);
+// 光速视觉层必须在 renderer.compile 之前加入场景，着色器才会预编译
+const lightView = createLightView(scene);
 const {
   stars, sunUniforms, sunRecord, coronas, sunDot,
   planets, moonMesh, moonDot,
@@ -56,15 +61,17 @@ const hud = createHud({ onHome: () => rig.resetView() });
 rig = createCameraRig({ canvas, camera, space, hud });
 const labels = createLabels({ space, rig, camera });
 
-// ?size= 生效时，「尺寸与轨道等比例」不再成立，如实标注
+// ?size= 生效时，「尺寸与轨道等比例」不再成立，如实标注。
+// 必须在 createLightHud 之前：光速面板会缓存这行文案用于开关时还原。
 if (RADIUS_SCALE !== 1) {
   const sub = document.querySelector("#hud .sub");
   if (sub) sub.textContent = `程序生成太阳系 · 轨道等比例 · 天体半径放大 ${RADIUS_SCALE}×`;
 }
+const lightHud = createLightHud({ hud, lightView });
 
 // 调试探针按需加载，正常访问不下载解析
 if (Q.get("debug") === "1") {
-  import("./debug.js").then((m) => m.installDebug({ space, rig, hud, camera }));
+  import("./debug.js").then((m) => m.installDebug({ space, rig, hud, camera, lightHud }));
 }
 
 // ?focus=天体 直接聚焦（含太阳/月球），用于截图与分享。
@@ -135,6 +142,9 @@ function animate() {
   //    否则快速拖动时用的是上一帧姿态，日冕面片会歪斜、星壳横向游移
   for (const c of coronas) c.quaternion.copy(camera.quaternion);
   stars.points.position.copy(camera.position);
+
+  // 5) 光速层：推进独立的光行时时钟、更新波前与光线、刷新 HUD
+  lightHud.tick(dt);
 
   renderer.render(scene, camera);
   // 用本帧的相机矩阵投影标签，避免近距离聚焦时滞后一帧
