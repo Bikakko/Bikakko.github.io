@@ -11,7 +11,7 @@ import {
   C_KM_S, KM_PER_AU, KM_PER_UNIT, AU_UNIT,
   UNITS_PER_LIGHT_SEC, LIGHT_SEC_PER_AU,
   SECONDS_PER_DAY, TIME_RATES, TIME_RATE_DEFAULT, TIME_RATE_LIGHT,
-  PULSE_INTERVAL_DEFAULT, MAX_PULSES,
+  PULSE_EVERY_REAL_SEC, MAX_PULSES, PULSE_FALLBACK_SEC,
 } from "../assets/solar/config.js";
 import { SUN_CFG, PLANETS } from "../assets/solar/bodies.js";
 import { orbitalPosition } from "../assets/solar/orbit-math.js";
@@ -25,7 +25,6 @@ test("光速基准：c 恒定，1 AU 光行时 499.005 秒（8 分 19 秒）", (
   assert.ok(close(LIGHT_SEC_PER_AU, KM_PER_AU / C_KM_S, 1e-9));
   assert.ok(close(lightSecondsPerAU(), 499.005, 0.01));
   assert.ok(close(lightTimeSeconds(AU_UNIT), LIGHT_SEC_PER_AU, 1e-9));
-  // 倍率不参与物理换算：距离 → 光行时只由 c 决定
   assert.equal(lightTimeSeconds(AU_UNIT), 1 * KM_PER_AU / C_KM_S);
 });
 
@@ -34,7 +33,7 @@ test("3D 光球半径 = 光行时 × 光速，t=0 时不小于日面半径", () 
   assert.ok(close(frontRadius(LIGHT_SEC_PER_AU), AU_UNIT, 1e-9));
   assert.ok(close(frontRadius(3600), 3600 * UNITS_PER_LIGHT_SEC, 1e-9));
   assert.equal(frontRadius(-10), SUN_CFG.radius);
-  assert.ok(frontRadius(15005) > 300, "4 小时后的光球应越过海王星轨道");
+  assert.ok(frontRadius(15005) > 300);
 });
 
 test("八颗行星在 J2000 的光行时（用瞬时距离，非平均半长轴）", () => {
@@ -50,11 +49,9 @@ test("八颗行星在 J2000 的光行时（用瞬时距离，非平均半长轴�
     assert.ok(close(got[i].seconds, got[i].distance / UNITS_PER_LIGHT_SEC, 1e-9));
   }
   for (let i = 1; i < 8; i++) assert.ok(got[i].seconds > got[i - 1].seconds);
-
-  // 偏心率带来的浮动：一世纪后水星更靠近近日点，光行时明显变短
   const next = lightArrivals(36525);
   assert.ok(next[0].seconds < got[0].seconds - 10);
-  assert.ok(next[3].seconds > got[3].seconds + 10, "火星更靠近远地点");
+  assert.ok(next[3].seconds > got[3].seconds + 10);
 });
 
 test("对数标尺：端点、往返与夹取", () => {
@@ -81,12 +78,9 @@ test("统一时间：单一倍率推进 simTime，光波前与天体由它共同
   assert.ok(close(t1 - emission, 600 / SECONDS_PER_DAY, 1e-12));
   assert.equal(advancedSimDays(emission, 0, 600), emission);
   assert.equal(advancedSimDays(emission, -1, 600), emission);
-
   const sec = lightSecondsSince(t1, emission);
   assert.ok(close(sec, 600, 1e-9));
   assert.ok(close(frontRadius(sec), 600 * UNITS_PER_LIGHT_SEC, 1e-9));
-
-  // 同一个 simTime 也让行星移动（不再冻结）：光走 600 秒，水星也走 600 秒
   const pEmit = orbitalPosition(PLANETS[0], emission, out());
   const pNow = orbitalPosition(PLANETS[0], t1, out());
   assert.ok(Math.hypot(pNow.x - pEmit.x, pNow.y - pEmit.y, pNow.z - pEmit.z) > 0);
@@ -98,9 +92,8 @@ test("光行时 ↔ 统一时间轴换算：重播与标尺拖动", () => {
     const t = emissionPlusSeconds(emission, sec);
     assert.ok(close(lightSecondsSince(t, emission), sec, 1e-6), `往返 ${sec}`);
   }
-  assert.equal(lightSecondsSince(emission - 1, emission), 0, "发射前没有波前");
+  assert.equal(lightSecondsSince(emission - 1, emission), 0);
   assert.equal(emissionPlusSeconds(emission, -5), emission);
-  // 重播：simTime 回到 emission → 光行时归零，光球回到日面
   assert.equal(lightSecondsSince(emission, emission), 0);
   assert.equal(frontRadius(lightSecondsSince(emission, emission)), SUN_CFG.radius);
 });
@@ -111,20 +104,17 @@ test("统一倍率表：只有一套，1:1 是真实时间", () => {
   assert.equal(TIME_RATE_LIGHT, 600);
   assert.ok(TIME_RATES.includes(600));
   for (let i = 1; i < TIME_RATES.length; i++) {
-    assert.ok(TIME_RATES[i] > TIME_RATES[i - 1], "档位严格递增");
+    assert.ok(TIME_RATES[i] > TIME_RATES[i - 1]);
   }
-  // 1:1 下 1 真实秒推进 1 模拟秒 → 光走 1 光秒（仍小于日面半径，取下限）
   const t = advancedSimDays(0, 1, TIME_RATE_DEFAULT);
   assert.ok(close(lightSecondsSince(t, 0), 1, 1e-9));
   assert.equal(frontRadius(lightSecondsSince(t, 0)), SUN_CFG.radius);
-  // 600 秒后光球半径严格等于 c·t
   const t600 = advancedSimDays(0, 600, TIME_RATE_DEFAULT);
   assert.ok(close(frontRadius(lightSecondsSince(t600, 0)), 600 * UNITS_PER_LIGHT_SEC, 1e-9));
-  // 1:1 下走过 1 AU 需要 499 秒真实时间
   assert.ok(close(
     lightSecondsSince(advancedSimDays(0, LIGHT_SEC_PER_AU, 1), 0),
     LIGHT_SEC_PER_AU, 1e-6));
-  assert.equal(C_KM_S, 299792.458, "倍率不改变 c");
+  assert.equal(C_KM_S, 299792.458);
 });
 
 test("时间格式化", () => {
@@ -137,43 +127,56 @@ test("时间格式化", () => {
   assert.equal(formatLightTime(15005), "4 小时 10 分 5 秒");
 });
 
-test("脉冲序列：由 lightSec 纯函数推导，间隔固定、可复现", () => {
-  const step = PULSE_INTERVAL_DEFAULT;   // 600 光秒
-  assert.equal(step, 600);
-  assert.ok(MAX_PULSES >= 26);
+test("脉冲序列：主波前始终保留 + 最近若干层，纯函数可复现", () => {
+  const step = 600;
+  assert.equal(PULSE_EVERY_REAL_SEC, 1);
+  assert.equal(MAX_PULSES, 8);
 
-  // 刚发射 / 尚未到下一次脉冲：只有一层主球
-  assert.deepEqual(pulseRadii(0), [frontRadius(0)]);
-  assert.deepEqual(pulseRadii(300), [frontRadius(300)]);
-  assert.deepEqual(pulseRadii(step - 1), [frontRadius(step - 1)]);
+  // 还没发出第二个脉冲：只有主波前
+  assert.deepEqual(pulseRadii(0, step), [frontRadius(0)]);
+  assert.deepEqual(pulseRadii(300, step), [frontRadius(300)]);
+  assert.deepEqual(pulseRadii(599, step), [frontRadius(599)]);
 
-  // 正好第二次脉冲：外层主球 + 刚发出的新球
-  const two = pulseRadii(step);
+  // 正好第二次脉冲：主波前 + 刚发出的新球
+  const two = pulseRadii(600, step);
   assert.equal(two.length, 2);
-  assert.ok(close(two[0], frontRadius(step), 1e-9));
+  assert.ok(close(two[0], frontRadius(600), 1e-9));
   assert.equal(two[1], frontRadius(0));
-  assert.ok(two[0] > two[1]);
 
-  // 到海王星（15005 光秒）：多层同心球，半径从大到小、等间距
-  const all = pulseRadii(15005);
-  assert.equal(all.length, Math.floor(15005 / step) + 1);
-  assert.ok(close(all[0], frontRadius(15005), 1e-9), "最外层是主波前");
-  for (let i = 1; i < all.length; i++) {
+  // 到海王星：主波前仍是最大球，其后脉冲等间距，层数受上限约束
+  const all = pulseRadii(15005, step);
+  assert.equal(all.length, MAX_PULSES);
+  assert.ok(close(all[0], frontRadius(15005), 1e-9), "radii[0] 始终是主波前");
+  assert.ok(all[1] < all[0]);
+  for (let i = 2; i < all.length; i++) {
     assert.ok(all[i] < all[i - 1], `第 ${i} 层应更靠内`);
     assert.ok(close(all[i - 1] - all[i], step * UNITS_PER_LIGHT_SEC, 1e-6));
   }
-
-  // 同一光行时结果一致（暂停 / 重播 / 截图复现）
-  assert.deepEqual(pulseRadii(4321), pulseRadii(4321));
+  assert.deepEqual(pulseRadii(4321, step), pulseRadii(4321, step));
 });
 
-test("脉冲数量上限、自定义间隔与非法输入", () => {
-  const many = pulseRadii(600 * 100, 600, 8);
-  assert.equal(many.length, 8);
-  assert.ok(close(many[0], frontRadius(600 * 7), 1e-9));
-  assert.equal(many[many.length - 1], frontRadius(0));
+test("脉冲按真实时间每 1 秒一次：间隔 = 倍率 × 真实间隔，与倍率无关", () => {
+  const lightSec = 15005;
+  // 真实每秒一脉冲 → 模拟轴上相邻脉冲相差 rateSec 模拟秒
+  for (const rate of [1, 60, 600, 3600]) {
+    const radii = pulseRadii(lightSec, rate);
+    assert.equal(radii.length, Math.min(MAX_PULSES, Math.floor(lightSec / rate) + 1),
+      `rate=${rate} 层数`);
+    assert.ok(close(radii[0], frontRadius(lightSec), 1e-9));
+    // 间隔较大时不受日面半径下限影响，可直接校验等间距
+    if (rate >= 600 && radii.length >= 3) {
+      assert.ok(close(radii[radii.length - 2] - radii[radii.length - 1],
+        rate * UNITS_PER_LIGHT_SEC, 1e-6), `rate=${rate} 相邻脉冲间隔`);
+    }
+  }
+  // 极慢倍率（30 天/秒）下光行时还不够发第二次脉冲
+  assert.equal(pulseRadii(lightSec, 2592000).length, 1);
+});
 
-  assert.equal(pulseRadii(900, 300).length, 4);
-  assert.equal(pulseRadii(1200, 0).length, pulseRadii(1200).length);
-  assert.deepEqual(pulseRadii(-100), [frontRadius(0)]);
+test("脉冲层数上限、非法间隔与负光行时", () => {
+  const many = pulseRadii(600 * 100, 600, 4);
+  assert.equal(many.length, 4);
+  assert.ok(close(many[0], frontRadius(600 * 100), 1e-9));
+  assert.equal(pulseRadii(1200, 0).length, pulseRadii(1200, PULSE_FALLBACK_SEC).length);
+  assert.deepEqual(pulseRadii(-100, 600), [frontRadius(0)]);
 });

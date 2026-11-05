@@ -1,25 +1,25 @@
 /* ============================================================
-   太阳系 · Solar · 3D 光速视觉层（脉冲线框球）
-   - 每层光球是真实 3D 线框球：统一亮度的经纬线 + 黄道面大圆（光弧），
-     没有 fresnel 高亮、没有球面面片。线宽恒为 1px，与球半径无关。
-     最外层主球用完整经纬网（12 纬 / 24 经），后续脉冲层用稀疏网
-     （6 纬 / 8 经）避免多层叠加糊成一团；每层各自的大圆形成涟漪。
-   - 太阳每隔 600 光秒发出一层新球（默认倍率 600× 下每真实 1 秒一层）。
-     层数由 lightSec 纯函数推导，暂停/重播/截图都一致；相机被外层光球
-     包裹后仍能看到后续脉冲不断从太阳向外扩散。
-   - 八条太阳→行星光线，按最外层波前半径裁断，前端高亮。
+   太阳系 · Solar · 3D 光速视觉层（半透明光球 + 真实时间脉冲）
+   - 每层光球是真实 3D 半透明球面：轮廓略亮、内部极淡，普通混合。
+     多层叠加只会收敛到球面颜色，不会累积成白团（不做加性混合）。
+   - 经纬线只画在最外层主球上，统一普通亮度、1px 线宽；多层各画一套
+     会叠成密密麻麻的平行线，所以整套场景只有一套经纬网。
+     每层另有黄道面大圆（光弧），主球额外带两条子午圆给出纵深。
+   - 脉冲按「现实时间」每 1 秒一层，与模拟倍率无关：换算成模拟时间轴
+     间隔 = rateSec × qPulseEvery，仍是 lightSec 的纯函数，可复现。
+     最多 8 层；相机被外层光球包裹后仍能看到后续脉冲从太阳向外扩散。
+   - 八条太阳→行星光线，按主波前半径裁断，前端高亮。
    ============================================================ */
 import * as THREE from "three";
 import { PLANETS } from "./bodies.js";
 import { orbitalPosition } from "./orbit-math.js";
-import { pulseRadii } from "./light-math.js";
-import { qPulse, MAX_PULSES } from "./config.js";
+import { pulseRadii, frontRadius } from "./light-math.js";
+import { qPulseEvery, MAX_PULSES } from "./config.js";
 import {
   LOGDEPTH_PARS_VERT, LOGDEPTH_VERT, LOGDEPTH_PARS_FRAG, LOGDEPTH_FRAG,
 } from "./shaders.js";
 
-// 单位球经纬线（LineSegments）。旧的球面着色器约 8 纬 / 16 经，主球略提高到
-// 12 纬 / 24 经；脉冲层用一半密度，保证多层同时可见时仍能分辨层次。
+// 单位球经纬线（LineSegments）。只画一套，10 纬 / 16 经，普通亮度。
 function makeGridGeometry(latLines, lonLines, seg) {
   const pts = [];
   for (let j = 1; j < latLines; j++) {
@@ -66,33 +66,72 @@ export function createLightView(scene, camera) {
   group.visible = false;
   scene.add(group);
 
-  const mainGridGeo = makeGridGeometry(12, 24, 72);
-  const pulseGridGeo = makeGridGeometry(6, 8, 48);
+  /* ---------- 半透明光球 ----------
+     NormalBlending：N 层相同颜色叠加后趋向球面色，不会像加性混合那样
+     越叠越亮直至白屏。内部 alpha 极低，只有轮廓（fres）可见为细环，
+     因此多层球壳叠在一起也不会糊住内部行星。 */
+  const sphereMat = new THREE.ShaderMaterial({
+    uniforms: {
+      uColor:   { value: new THREE.Color(0xffc078) },
+      uOpacity: { value: 0.11 },
+    },
+    transparent: true, depthWrite: false, depthTest: true,
+    side: THREE.DoubleSide, blending: THREE.NormalBlending,
+    vertexShader: /* glsl */ `
+      varying vec3 vN;
+      varying vec3 vView;
+      ${LOGDEPTH_PARS_VERT}
+      void main() {
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vN = normalize(normalMatrix * normal);
+        vView = normalize(-mv.xyz);
+        gl_Position = projectionMatrix * mv;
+        ${LOGDEPTH_VERT}
+      }
+    `,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uColor;
+      uniform float uOpacity;
+      varying vec3 vN;
+      varying vec3 vView;
+      ${LOGDEPTH_PARS_FRAG}
+      void main() {
+        float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vView))), 2.0);
+        float a = uOpacity * (0.18 + 0.82 * fres);
+        gl_FragColor = vec4(uColor, a);
+        ${LOGDEPTH_FRAG}
+      }
+    `,
+  });
+
+  const sphereGeo = new THREE.SphereGeometry(1, 48, 32);
+  const gridGeo = makeGridGeometry(10, 16, 64);
   const circleGeo = makeCircleGeometry();
-  // 所有经纬线与大圆共用同一材质：颜色、亮度完全一致。
-  // 普通混合而非加性：多层同心球叠加时颜色收敛到线色，不会累积成白屏。
   const lineMat = new THREE.LineBasicMaterial({
-    color: 0xffb066, transparent: true, opacity: 0.34,
+    color: 0xffb066, transparent: true, opacity: 0.30,
     depthWrite: false, depthTest: true, blending: THREE.NormalBlending,
   });
 
   const slots = [];
   for (let i = 0; i < MAX_PULSES; i++) {
-    const grid = new THREE.LineSegments(i === 0 ? mainGridGeo : pulseGridGeo, lineMat);
+    const sphere = new THREE.Mesh(sphereGeo, sphereMat);
+    sphere.renderOrder = 2;
     const equator = new THREE.LineLoop(circleGeo, lineMat);
     equator.rotation.x = -Math.PI / 2;              // XZ：黄道面
-    const parts = [grid, equator];
+    equator.renderOrder = 3;
+    const parts = [sphere, equator];
     if (i === 0) {
-      // 最外层主球额外带两条子午圆，给出球体的纵深骨架
+      // 整套场景只有这一套经纬网，避免多层叠加成平行线团
+      const grid = new THREE.LineSegments(gridGeo, lineMat);
       const merA = new THREE.LineLoop(circleGeo, lineMat);   // XY
       const merB = new THREE.LineLoop(circleGeo, lineMat);   // YZ
       merB.rotation.y = Math.PI / 2;
-      parts.push(merA, merB);
+      for (const o of [grid, merA, merB]) o.renderOrder = 3;
+      parts.push(grid, merA, merB);
     }
     for (const o of parts) {
       o.frustumCulled = false;
       o.visible = false;
-      o.renderOrder = 3;
       group.add(o);
     }
     slots.push({ parts });
@@ -144,9 +183,11 @@ export function createLightView(scene, camera) {
   const _camPos = new THREE.Vector3();
   let cameraInside = false;
 
-  function update(lightSec, simTime) {
-    // radii[0] 是最老 / 最大的主波前，最后一个是刚发出的新脉冲
-    const radii = pulseRadii(lightSec, qPulse);
+  // rateSec：当前统一倍率（模拟秒/真实秒），用于把「每真实 1 秒」换算成
+  // 模拟时间轴上的脉冲间隔。脉冲序列仍是 lightSec 的纯函数。
+  function update(lightSec, simTime, rateSec = 1) {
+    const interval = Math.max(1, rateSec * qPulseEvery);
+    const radii = pulseRadii(lightSec, interval);   // [主波前, 最近若干脉冲]
     for (let i = 0; i < slots.length; i++) {
       const s = slots[i];
       const active = i < radii.length;
@@ -156,7 +197,7 @@ export function createLightView(scene, camera) {
       }
     }
 
-    const mainR = radii[0];
+    const mainR = frontRadius(lightSec);
     // rig.updateCamera 只改了 position/quaternion，renderer.render 才会刷新
     // matrixWorld；本函数在 render 之前执行，需自行取本帧相机位置。
     camera.updateMatrixWorld();

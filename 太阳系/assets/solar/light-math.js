@@ -8,7 +8,7 @@
    ============================================================ */
 import {
   UNITS_PER_LIGHT_SEC, LIGHT_SEC_PER_AU, SECONDS_PER_DAY,
-  PULSE_INTERVAL_DEFAULT, MAX_PULSES,
+  PULSE_FALLBACK_SEC, MAX_PULSES,
 } from "./config.js";
 import { SUN_CFG, PLANETS } from "./bodies.js";
 import { orbitalPosition } from "./orbit-math.js";
@@ -37,20 +37,21 @@ export function frontRadius(lightSec) {
 }
 
 /* ---------- 脉冲序列 ----------
-   太阳每隔 intervalSec 光秒发出一层新光球。返回当前光行时下可见的
-   全部脉冲半径（世界单位），从最老/最大到最新/最小。
-   完全由 lightSec 推导 —— 暂停、重播、拖标尺、?lt 截图都自动一致，
-   不需要另一个累加时钟。maxCount 限制同时渲染的层数。 */
-export function pulseRadii(lightSec, intervalSec = PULSE_INTERVAL_DEFAULT,
+   脉冲按「现实时间」每一秒一次：在模拟时间轴上相邻脉冲相差
+   intervalSec = rateSec × 真实间隔 模拟秒，所以倍率变化时脉冲频率不变。
+   返回当前可见的球半径：radii[0] 始终是主波前（光走到现在），
+   其后是最近若干个脉冲（由大到小）。纯函数 → 截图可复现。
+   maxCount 压低层数，避免多层球面叠加糊住画面。 */
+export function pulseRadii(lightSec, intervalSec = PULSE_FALLBACK_SEC,
                            maxCount = MAX_PULSES) {
   const step = Number.isFinite(intervalSec) && intervalSec > 0
-    ? intervalSec : PULSE_INTERVAL_DEFAULT;
+    ? intervalSec : PULSE_FALLBACK_SEC;
   const t = Number.isFinite(lightSec) ? Math.max(0, lightSec) : 0;
+  const limit = Math.max(2, Math.floor(maxCount) || MAX_PULSES);
+  const radii = [frontRadius(t)];            // 主波前：始终保留
   const n = Math.floor(t / step);
-  const limit = Math.max(1, Math.floor(maxCount) || MAX_PULSES);
-  const count = Math.min(limit, n + 1);
-  const radii = [];
-  for (let k = n - count + 1; k <= n; k++) {
+  const extra = Math.min(limit - 1, n);      // 最近 extra 个后续脉冲
+  for (let k = n - extra + 1; k <= n; k++) {
     radii.push(frontRadius(t - k * step));
   }
   return radii;
