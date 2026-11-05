@@ -8,6 +8,7 @@
    ============================================================ */
 import {
   UNITS_PER_LIGHT_SEC, LIGHT_SEC_PER_AU, SECONDS_PER_DAY,
+  PULSE_INTERVAL_DEFAULT, MAX_PULSES,
 } from "./config.js";
 import { SUN_CFG, PLANETS } from "./bodies.js";
 import { orbitalPosition } from "./orbit-math.js";
@@ -30,9 +31,29 @@ export function emissionPlusSeconds(emissionDays, lightSec) {
 }
 
 // 波前半径（世界单位）：光从太阳中心出发走了 lightSec 秒。
-// 下限取日面半径，避免 t=0 时 3D 球面几何退化。
+// 下限取日面半径，避免 t=0 时球面几何退化。
 export function frontRadius(lightSec) {
   return Math.max(SUN_CFG.radius, Math.max(0, lightSec) * UNITS_PER_LIGHT_SEC);
+}
+
+/* ---------- 脉冲序列 ----------
+   太阳每隔 intervalSec 光秒发出一层新光球。返回当前光行时下可见的
+   全部脉冲半径（世界单位），从最老/最大到最新/最小。
+   完全由 lightSec 推导 —— 暂停、重播、拖标尺、?lt 截图都自动一致，
+   不需要另一个累加时钟。maxCount 限制同时渲染的层数。 */
+export function pulseRadii(lightSec, intervalSec = PULSE_INTERVAL_DEFAULT,
+                           maxCount = MAX_PULSES) {
+  const step = Number.isFinite(intervalSec) && intervalSec > 0
+    ? intervalSec : PULSE_INTERVAL_DEFAULT;
+  const t = Number.isFinite(lightSec) ? Math.max(0, lightSec) : 0;
+  const n = Math.floor(t / step);
+  const limit = Math.max(1, Math.floor(maxCount) || MAX_PULSES);
+  const count = Math.min(limit, n + 1);
+  const radii = [];
+  for (let k = n - count + 1; k <= n; k++) {
+    radii.push(frontRadius(t - k * step));
+  }
+  return radii;
 }
 
 export function lightTimeSeconds(distanceWorld) {

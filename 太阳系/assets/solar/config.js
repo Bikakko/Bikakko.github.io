@@ -54,6 +54,12 @@ export const TIME_RATES = [1, 60, 600, 3600, 21600, 86400, 604800, 2592000];
 export const TIME_RATE_DEFAULT = 1;      // 真实时间 1:1
 export const TIME_RATE_LIGHT   = 600;    // 打开光速模式且未指定 ?rate 时的推荐倍率
 
+// 脉冲：太阳每隔 PULSE_INTERVAL_DEFAULT 光秒发出一层新光球。600 光秒
+// 在推荐倍率 600× 下恰好每真实 1 秒出现一层；相机被外层光球包裹后，
+// 仍能看到后续脉冲不断从太阳向外扩散。脉冲是时间轴的纯函数，可复现。
+export const PULSE_INTERVAL_DEFAULT = 600;
+export const MAX_PULSES            = 32;
+
 /* ---------- 光速查询参数（与其它 ?参数 同样用于复现截图） ---------- */
 export const qLight = Q.get("light") === "1";
 export const qRate  = (() => {
@@ -66,3 +72,8 @@ export const qLightT      = (() => {
   return v !== null && v >= 0 ? v : null;
 })();
 export const qLightStatic = qStatic || Q.get("lstatic") === "1";
+// ?pulse= 覆盖脉冲间隔（光秒）
+export const qPulse = (() => {
+  const v = numParam("pulse");
+  return v !== null && v > 0 ? v : PULSE_INTERVAL_DEFAULT;
+})();

@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   lightTimeSeconds, frontRadius, lightArrivals, lightSecondsPerAU,
-  lightSecondsSince, emissionPlusSeconds, advancedSimDays,
+  lightSecondsSince, emissionPlusSeconds, advancedSimDays, pulseRadii,
   toLogAxis, fromLogAxis,
   formatClock, formatShort, formatLightTime,
   LOG_AXIS_MIN, LOG_AXIS_MAX, LIGHT_TICKS,
@@ -11,6 +11,7 @@ import {
   C_KM_S, KM_PER_AU, KM_PER_UNIT, AU_UNIT,
   UNITS_PER_LIGHT_SEC, LIGHT_SEC_PER_AU,
   SECONDS_PER_DAY, TIME_RATES, TIME_RATE_DEFAULT, TIME_RATE_LIGHT,
+  PULSE_INTERVAL_DEFAULT, MAX_PULSES,
 } from "../assets/solar/config.js";
 import { SUN_CFG, PLANETS } from "../assets/solar/bodies.js";
 import { orbitalPosition } from "../assets/solar/orbit-math.js";
@@ -134,4 +135,45 @@ test("时间格式化", () => {
   assert.equal(formatShort(4577), "1h16m");
   assert.equal(formatLightTime(499), "8 分 19 秒");
   assert.equal(formatLightTime(15005), "4 小时 10 分 5 秒");
+});
+
+test("脉冲序列：由 lightSec 纯函数推导，间隔固定、可复现", () => {
+  const step = PULSE_INTERVAL_DEFAULT;   // 600 光秒
+  assert.equal(step, 600);
+  assert.ok(MAX_PULSES >= 26);
+
+  // 刚发射 / 尚未到下一次脉冲：只有一层主球
+  assert.deepEqual(pulseRadii(0), [frontRadius(0)]);
+  assert.deepEqual(pulseRadii(300), [frontRadius(300)]);
+  assert.deepEqual(pulseRadii(step - 1), [frontRadius(step - 1)]);
+
+  // 正好第二次脉冲：外层主球 + 刚发出的新球
+  const two = pulseRadii(step);
+  assert.equal(two.length, 2);
+  assert.ok(close(two[0], frontRadius(step), 1e-9));
+  assert.equal(two[1], frontRadius(0));
+  assert.ok(two[0] > two[1]);
+
+  // 到海王星（15005 光秒）：多层同心球，半径从大到小、等间距
+  const all = pulseRadii(15005);
+  assert.equal(all.length, Math.floor(15005 / step) + 1);
+  assert.ok(close(all[0], frontRadius(15005), 1e-9), "最外层是主波前");
+  for (let i = 1; i < all.length; i++) {
+    assert.ok(all[i] < all[i - 1], `第 ${i} 层应更靠内`);
+    assert.ok(close(all[i - 1] - all[i], step * UNITS_PER_LIGHT_SEC, 1e-6));
+  }
+
+  // 同一光行时结果一致（暂停 / 重播 / 截图复现）
+  assert.deepEqual(pulseRadii(4321), pulseRadii(4321));
+});
+
+test("脉冲数量上限、自定义间隔与非法输入", () => {
+  const many = pulseRadii(600 * 100, 600, 8);
+  assert.equal(many.length, 8);
+  assert.ok(close(many[0], frontRadius(600 * 7), 1e-9));
+  assert.equal(many[many.length - 1], frontRadius(0));
+
+  assert.equal(pulseRadii(900, 300).length, 4);
+  assert.equal(pulseRadii(1200, 0).length, pulseRadii(1200).length);
+  assert.deepEqual(pulseRadii(-100), [frontRadius(0)]);
 });

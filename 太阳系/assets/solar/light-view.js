@@ -1,127 +1,102 @@
 /* ============================================================
-   太阳系 · Solar · 3D 光速视觉层
-   - 波前是一个真实 3D 球：半透明球面（经纬网格 + 轮廓光，DoubleSide
-     内表面也可见）+ 三个正交大圆（波前球与黄道面 / 两条子午面的交圆）。
-     全部随相机正确透视；相机在球内球外都能看到「光弧」与球面覆盖区域。
-   - 网格线与大圆都有屏幕像素宽度下限，光球刚出发时也看得见。
-   - 八条太阳→行星光线，按世界半径裁断，前端高亮。
-   自定义 ShaderMaterial 必须注入对数深度片段（见 shaders.js）。
+   太阳系 · Solar · 3D 光速视觉层（脉冲线框球）
+   - 每层光球是真实 3D 线框球：统一亮度的经纬线 + 黄道面大圆（光弧），
+     没有 fresnel 高亮、没有球面面片。线宽恒为 1px，与球半径无关。
+     最外层主球用完整经纬网（12 纬 / 24 经），后续脉冲层用稀疏网
+     （6 纬 / 8 经）避免多层叠加糊成一团；每层各自的大圆形成涟漪。
+   - 太阳每隔 600 光秒发出一层新球（默认倍率 600× 下每真实 1 秒一层）。
+     层数由 lightSec 纯函数推导，暂停/重播/截图都一致；相机被外层光球
+     包裹后仍能看到后续脉冲不断从太阳向外扩散。
+   - 八条太阳→行星光线，按最外层波前半径裁断，前端高亮。
    ============================================================ */
 import * as THREE from "three";
 import { PLANETS } from "./bodies.js";
 import { orbitalPosition } from "./orbit-math.js";
-import { frontRadius } from "./light-math.js";
+import { pulseRadii } from "./light-math.js";
+import { qPulse, MAX_PULSES } from "./config.js";
 import {
   LOGDEPTH_PARS_VERT, LOGDEPTH_VERT, LOGDEPTH_PARS_FRAG, LOGDEPTH_FRAG,
 } from "./shaders.js";
+
+// 单位球经纬线（LineSegments）。旧的球面着色器约 8 纬 / 16 经，主球略提高到
+// 12 纬 / 24 经；脉冲层用一半密度，保证多层同时可见时仍能分辨层次。
+function makeGridGeometry(latLines, lonLines, seg) {
+  const pts = [];
+  for (let j = 1; j < latLines; j++) {
+    if (j === latLines / 2) continue;   // 赤道交给黄道大圆
+    const lat = -Math.PI / 2 + (j / latLines) * Math.PI;
+    const r = Math.cos(lat), y = Math.sin(lat);
+    for (let i = 0; i < seg; i++) {
+      const a0 = (i / seg) * Math.PI * 2;
+      const a1 = ((i + 1) / seg) * Math.PI * 2;
+      pts.push(r * Math.cos(a0), y, r * Math.sin(a0));
+      pts.push(r * Math.cos(a1), y, r * Math.sin(a1));
+    }
+  }
+  const half = Math.floor(seg / 2);
+  for (let j = 0; j < lonLines; j++) {
+    const lon = (j / lonLines) * Math.PI * 2;
+    const cx = Math.cos(lon), cz = Math.sin(lon);
+    for (let i = 0; i < half; i++) {
+      const t0 = -Math.PI / 2 + (i / half) * Math.PI;
+      const t1 = -Math.PI / 2 + ((i + 1) / half) * Math.PI;
+      pts.push(Math.cos(t0) * cx, Math.sin(t0), Math.cos(t0) * cz);
+      pts.push(Math.cos(t1) * cx, Math.sin(t1), Math.cos(t1) * cz);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+  return g;
+}
+
+function makeCircleGeometry() {
+  const pts = [];
+  const SEG = 128;
+  for (let i = 0; i < SEG; i++) {
+    const a = (i / SEG) * Math.PI * 2;
+    pts.push(Math.cos(a), Math.sin(a), 0);   // XY 平面
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(pts, 3));
+  return g;
+}
 
 export function createLightView(scene, camera) {
   const group = new THREE.Group();
   group.visible = false;
   scene.add(group);
 
-  const scalable = [];
-
-  /* ---------- 半透明 3D 球面 ----------
-     网格基于物体坐标而非视线，因此相机进入球壳后内表面依然可见；
-     线宽按屏幕导数归一化，光球很小或很大时都保持约 2px。
-     fresnel 只负责球外的轮廓光，不再是唯一的可见性来源。 */
-  const sphereUniforms = {
-    uColor:   { value: new THREE.Color(0xffcf80) },
-    uOpacity: { value: 0.9 },
-    uInside:  { value: 0 },
-  };
-  const sphereMat = new THREE.ShaderMaterial({
-    uniforms: sphereUniforms,
-    transparent: true, depthWrite: false, depthTest: true,
-    side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
-    vertexShader: /* glsl */ `
-      varying vec3 vObj;
-      varying vec3 vN;
-      varying vec3 vView;
-      ${LOGDEPTH_PARS_VERT}
-      void main() {
-        vObj = position;
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        vN = normalize(normalMatrix * normal);
-        vView = normalize(-mv.xyz);
-        gl_Position = projectionMatrix * mv;
-        ${LOGDEPTH_VERT}
-      }
-    `,
-    fragmentShader: /* glsl */ `
-      uniform vec3 uColor;
-      uniform float uOpacity;
-      uniform float uInside;
-      varying vec3 vObj;
-      varying vec3 vN;
-      varying vec3 vView;
-      ${LOGDEPTH_PARS_FRAG}
-      void main() {
-        vec3 n = normalize(vObj);
-        float lat = asin(clamp(n.y, -1.0, 1.0));
-        float lon = atan(n.z, n.x);
-        float latC = lat * 8.0;
-        float lonC = lon * 8.0;
-        // 线宽以 fwidth 归一化：与光球半径、相机距离无关，约 2px
-        float latW = clamp(fwidth(latC), 0.02, 0.6);
-        float lonW = clamp(fwidth(lonC), 0.02, 0.6);
-        float latLine = 1.0 - smoothstep(0.0, 2.0 * latW, abs(sin(latC)));
-        float lonLine = 1.0 - smoothstep(0.0, 2.0 * lonW, abs(sin(lonC)));
-        float g = max(latLine, lonLine);
-        float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vView))), 2.0);
-        vec3 col = mix(vec3(1.0, 0.55, 0.22), uColor, 0.45);
-        // 基础项 + 球内增强：即使 fres≈0 也不会整球消失
-        float a = (g * 0.09 + fres * 0.22 + 0.024 + uInside * 0.022) * uOpacity;
-        gl_FragColor = vec4(col, a);
-        ${LOGDEPTH_FRAG}
-      }
-    `,
+  const mainGridGeo = makeGridGeometry(12, 24, 72);
+  const pulseGridGeo = makeGridGeometry(6, 8, 48);
+  const circleGeo = makeCircleGeometry();
+  // 所有经纬线与大圆共用同一材质：颜色、亮度完全一致。
+  // 普通混合而非加性：多层同心球叠加时颜色收敛到线色，不会累积成白屏。
+  const lineMat = new THREE.LineBasicMaterial({
+    color: 0xffb066, transparent: true, opacity: 0.34,
+    depthWrite: false, depthTest: true, blending: THREE.NormalBlending,
   });
-  const sphere = new THREE.Mesh(new THREE.SphereGeometry(1, 64, 48), sphereMat);
-  sphere.frustumCulled = false;
-  sphere.renderOrder = 2;
-  group.add(sphere);
-  scalable.push(sphere);
 
-  /* ---------- 三个正交大圆（波前球的交圆 / 「光弧」） ----------
-     真实 3D 几何，半径 = 波前半径，透视成椭圆。赤道圆就在黄道面上，
-     可直接和各行星轨道对比「光走到哪了」；两条子午圆给出球体的纵深。
-     相机在球内时这些圆仍在视野中。粗环（RingGeometry）负责大光球的
-     观感，1px 保底细环（LineLoop）保证光球刚出发时也看得见。 */
-  const ringGeo = new THREE.RingGeometry(0.980, 1.0, 256);
-  const circlePts = [];
-  for (let i = 0; i < 256; i++) {
-    const a = (i / 256) * Math.PI * 2;
-    circlePts.push(Math.cos(a), Math.sin(a), 0);
+  const slots = [];
+  for (let i = 0; i < MAX_PULSES; i++) {
+    const grid = new THREE.LineSegments(i === 0 ? mainGridGeo : pulseGridGeo, lineMat);
+    const equator = new THREE.LineLoop(circleGeo, lineMat);
+    equator.rotation.x = -Math.PI / 2;              // XZ：黄道面
+    const parts = [grid, equator];
+    if (i === 0) {
+      // 最外层主球额外带两条子午圆，给出球体的纵深骨架
+      const merA = new THREE.LineLoop(circleGeo, lineMat);   // XY
+      const merB = new THREE.LineLoop(circleGeo, lineMat);   // YZ
+      merB.rotation.y = Math.PI / 2;
+      parts.push(merA, merB);
+    }
+    for (const o of parts) {
+      o.frustumCulled = false;
+      o.visible = false;
+      o.renderOrder = 3;
+      group.add(o);
+    }
+    slots.push({ parts });
   }
-  const lineGeo = new THREE.BufferGeometry();
-  lineGeo.setAttribute("position", new THREE.Float32BufferAttribute(circlePts, 3));
-
-  const makeRing = (color, opacity, rotX, rotY) => {
-    const m = new THREE.Mesh(ringGeo, new THREE.MeshBasicMaterial({
-      color, transparent: true, opacity,
-      side: THREE.DoubleSide, depthWrite: false, depthTest: true,
-      blending: THREE.AdditiveBlending,
-    }));
-    m.rotation.set(rotX, rotY, 0);
-    m.renderOrder = 3;
-    group.add(m);
-    scalable.push(m);
-
-    const edge = new THREE.LineLoop(lineGeo, new THREE.LineBasicMaterial({
-      color, transparent: true, opacity: Math.min(1, opacity * 1.1),
-      depthWrite: false, depthTest: true, blending: THREE.AdditiveBlending,
-    }));
-    edge.rotation.set(rotX, rotY, 0);
-    edge.renderOrder = 4;
-    group.add(edge);
-    scalable.push(edge);
-  };
-  // RingGeometry / LineLoop 默认都在 XY 平面
-  makeRing(0xffc878, 0.85, -Math.PI / 2, 0);        // XZ：黄道面
-  makeRing(0xff9a5a, 0.40, 0, 0);                    // XY
-  makeRing(0xff9a5a, 0.40, 0, Math.PI / 2);          // YZ
 
   /* ---------- 八条光线（世界空间线段） ---------- */
   const rayMatFor = () => new THREE.ShaderMaterial({
@@ -145,7 +120,6 @@ export function createLightView(scene, camera) {
       void main() {
         float d = length(vWorld);
         if (d > uFront) discard;
-        // 波前附近 6% 的区段做「光子头」高亮
         float head = smoothstep(uFront * 0.94, uFront, d);
         vec3 col = mix(vec3(0.42, 0.60, 1.0), vec3(1.0, 0.85, 0.55), head);
         gl_FragColor = vec4(col, 0.22 + 0.65 * head);
@@ -155,7 +129,7 @@ export function createLightView(scene, camera) {
   });
 
   const rays = PLANETS.map((cfg) => {
-    const arr = new Float32Array(6);   // 太阳中心 → 行星当前位置
+    const arr = new Float32Array(6);
     const geo = new THREE.BufferGeometry();
     geo.setAttribute("position", new THREE.BufferAttribute(arr, 3));
     const mat = rayMatFor();
@@ -171,22 +145,30 @@ export function createLightView(scene, camera) {
   let cameraInside = false;
 
   function update(lightSec, simTime) {
-    const R = frontRadius(lightSec);
-    for (const m of scalable) m.scale.setScalar(R);
+    // radii[0] 是最老 / 最大的主波前，最后一个是刚发出的新脉冲
+    const radii = pulseRadii(lightSec, qPulse);
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i];
+      const active = i < radii.length;
+      for (const o of s.parts) {
+        o.visible = active;
+        if (active) o.scale.setScalar(radii[i]);
+      }
+    }
 
+    const mainR = radii[0];
     // rig.updateCamera 只改了 position/quaternion，renderer.render 才会刷新
     // matrixWorld；本函数在 render 之前执行，需自行取本帧相机位置。
     camera.updateMatrixWorld();
     camera.getWorldPosition(_camPos);
-    cameraInside = _camPos.lengthSq() < R * R;
-    sphereUniforms.uInside.value = cameraInside ? 1 : 0;
+    cameraInside = _camPos.lengthSq() < mainR * mainR;
 
     for (const r of rays) {
       orbitalPosition(r.cfg, simTime, _v);
       r.arr[0] = 0; r.arr[1] = 0; r.arr[2] = 0;
       r.arr[3] = _v.x; r.arr[4] = _v.y; r.arr[5] = _v.z;
       r.geo.attributes.position.needsUpdate = true;
-      r.mat.uniforms.uFront.value = R;
+      r.mat.uniforms.uFront.value = mainR;
     }
   }
 
