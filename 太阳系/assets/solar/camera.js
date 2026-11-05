@@ -824,12 +824,6 @@ export function createCameraRig({ canvas, camera, space, hud }) {
       }
     }
 
-    // 贴近观察时自动暂停，避免相机/天体缓慢漂移；焦点和自由视角都适用
-    hud.autoPauseCheck(
-      orbit.dist < (focusTarget ? Math.max(focusTarget.cfg.radius * 3, 1.0) : 1.0),
-      orbit.dist > (focusTarget ? Math.max(focusTarget.cfg.radius * 4, 1.5) : 1.5),
-    );
-
     const sp = Math.sin(orbit.phi), cp = Math.cos(orbit.phi);
     camera.position.set(
       orbit.target.x + orbit.dist * sp * Math.sin(orbit.theta),

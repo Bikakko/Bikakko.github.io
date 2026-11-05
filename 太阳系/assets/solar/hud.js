@@ -1,19 +1,14 @@
 /* ============================================================
    太阳系 · Solar · HUD
-   信息卡、速度/暂停、时间与帧率、贴近自动暂停
+   信息卡、速度/暂停、时间与帧率
    ============================================================ */
 import { qT, qStatic } from "./config.js";
 
 export function createHud({ onHome }) {
   let simTime = qT;
   let speedLevel = 1;
-  // 暂停拆成「用户暂停」与「贴近自动暂停」两个状态：
-  // 用户在被自动暂停时手动恢复，本次贴近不再自动压回（否则空格像失灵）
   let userPaused = false;
-  let autoPaused = false;
-  let autoSuppressed = false;
-  let nearBody = false;   // 最近一次 autoPauseCheck 报告的距离状态
-  const pausedNow = () => userPaused || autoPaused;
+  const pausedNow = () => userPaused;
   // 档位 → 每真实秒推进多少「天」：1× 为现实速度，2×–8× 按小时换算
   const DAYS_PER_SEC = [0, 1 / 86400, 0.5 / 24, 3 / 24, 12 / 24, 36 / 24, 72 / 24, 168 / 24, 720 / 24];
   let fpsAcc = 0, frames = 0;
@@ -52,7 +47,7 @@ export function createHud({ onHome }) {
   /* ---------- 速度 / 暂停 ---------- */
   function renderSpeed() {
     const paused = pausedNow();
-    speedEl.textContent = speedLevel + "×" + (paused ? (autoPaused && !userPaused ? " ⏸自动" : " ⏸") : "");
+    speedEl.textContent = speedLevel + "×" + (paused ? " ⏸" : "");
     for (const b of document.querySelectorAll(".ctrl button")) {
       if (b.dataset.sp === undefined) continue;
       const bv = parseFloat(b.dataset.sp);
@@ -62,21 +57,10 @@ export function createHud({ onHome }) {
   function applySpeed(v) {
     if (v === 0) {
       // 暂停键兼作恢复键
-      if (pausedNow()) {
-        userPaused = false;
-        // 处于贴近区时恢复：本次贴近不再自动暂停（否则下一帧立刻被压回）
-        if (autoPaused || nearBody) autoSuppressed = true;
-        autoPaused = false;
-      } else {
-        userPaused = true;
-      }
+      userPaused = !userPaused;
     } else {
       speedLevel = v;
       userPaused = false;
-      if (autoPaused || nearBody) {
-        autoPaused = false;
-        autoSuppressed = true;
-      }
     }
     renderSpeed();
   }
@@ -100,23 +84,6 @@ export function createHud({ onHome }) {
     if (e.code === "ArrowDown") applySpeed(Math.max(1, speedLevel - 1));
     if (e.code === "Space")     { e.preventDefault(); applySpeed(0); }
   });
-
-  /* ---------- 贴近观察自动暂停 ---------- */
-  function autoPauseCheck(close, far) {
-    if (qStatic) return;
-    nearBody = close;
-    if (autoSuppressed) {
-      if (far) autoSuppressed = false;   // 离开贴近区后才重新武装
-      return;
-    }
-    if (!userPaused && !autoPaused && close) {
-      autoPaused = true;
-      renderSpeed();
-    } else if (autoPaused && far) {
-      autoPaused = false;
-      renderSpeed();
-    }
-  }
 
   /* ---------- 时间推进与状态显示 ---------- */
   function advance(dt) {
@@ -145,7 +112,7 @@ export function createHud({ onHome }) {
   renderTime();
 
   return {
-    showInfo, hideInfo, autoPauseCheck,
+    showInfo, hideInfo,
     advance, updateHud, applySpeed,
     getSimTime: () => simTime,
     isPaused: pausedNow,
