@@ -43,20 +43,26 @@ export const DEG          = Math.PI / 180;
 export const C_KM_S              = 299792.458;
 export const UNITS_PER_LIGHT_SEC = C_KM_S / KM_PER_UNIT;   // 世界单位 / 光秒
 export const LIGHT_SEC_PER_AU    = KM_PER_AU / C_KM_S;     // ≈ 499.005 s
-export const LIGHT_RATE_DEFAULT  = 600;                    // 600 光秒 / 真实秒
-// 1 = 真实时间 1 秒 : 1 光秒（光走 4 小时到海王星就要等 4 小时）
-export const LIGHT_RATE_REALTIME = 1;
-export const LIGHT_RATES         = [1, 60, 600, 3600];
+export const SECONDS_PER_DAY     = 86400;
+
+// ============================================================
+//  统一时间流速：每真实秒推进多少「模拟秒」
+//  全站只有一个时间轴 simTime（距 J2000 的天数）和这一套倍率：
+//  行星公转/自转、光波前都由它派生，不存在第二个时钟。
+// ============================================================
+export const TIME_RATES = [1, 60, 600, 3600, 21600, 86400, 604800, 2592000];
+export const TIME_RATE_DEFAULT = 1;      // 真实时间 1:1
+export const TIME_RATE_LIGHT   = 600;    // 打开光速模式且未指定 ?rate 时的推荐倍率
 
 /* ---------- 光速查询参数（与其它 ?参数 同样用于复现截图） ---------- */
-export const qLight       = Q.get("light") === "1";
-export const qLightRate   = (() => {
-  const v = numParam("lrate");
-  return v !== null && v > 0 ? v : LIGHT_RATE_DEFAULT;
+export const qLight = Q.get("light") === "1";
+export const qRate  = (() => {
+  const v = numParam("rate") ?? numParam("lrate");   // ?lrate= 兼容旧链接
+  return v !== null && v > 0 ? v : null;
 })();
+// 打开光速模式时把统一时间定格在「发射后 lt 秒」
 export const qLightT      = (() => {
   const v = numParam("lt");
   return v !== null && v >= 0 ? v : null;
 })();
-export const qLightMode   = Q.get("lmode") === "log" ? "log" : "linear";
 export const qLightStatic = qStatic || Q.get("lstatic") === "1";

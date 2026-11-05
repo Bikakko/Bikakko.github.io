@@ -144,7 +144,7 @@ function animate() {
   stars.points.position.copy(camera.position);
 
   // 5) 光速层：推进独立的光行时时钟、更新波前与光线、刷新 HUD
-  lightHud.tick(dt);
+  lightHud.tick();
 
   renderer.render(scene, camera);
   // 用本帧的相机矩阵投影标签，避免近距离聚焦时滞后一帧

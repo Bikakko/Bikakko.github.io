@@ -258,19 +258,19 @@
   <div class="brand">SO<span>LAR</span></div>
   <div class="sub">程序生成太阳系 · 尺寸与轨道等比例 · J2000 轨道 / IAU 自转要素</div>
   <div class="row">时间 <span class="val" id="simtime">—</span></div>
-  <div class="row">时间流速 <span class="val" id="speed">真实速度</span></div>
+  <div class="row">时间流速 <span class="val" id="speed">真实时间 1:1</span></div>
   <div class="row" id="fpsRow">帧率 <span class="val" id="fps">—</span></div>
-  <!-- 档位是「每秒推进多少时间」，不是真实速度的倍数；标题写明真实速率 -->
+  <!-- 全站唯一一套倍率：每真实秒推进多少模拟秒。光波前与天体共用同一个时间 -->
   <div class="ctrl">
-    <button data-sp="0" title="暂停 / 继续">❚❚</button>
-    <button data-sp="1" title="真实速度：每秒推进 1 秒">真实</button>
-    <button data-sp="2" title="每秒推进 30 分钟（约真实速度的 1800 倍）">30m</button>
-    <button data-sp="3" title="每秒推进 3 小时">3h</button>
-    <button data-sp="4" title="每秒推进 12 小时">12h</button>
-    <button data-sp="5" title="每秒推进 1.5 天">1.5d</button>
-    <button data-sp="6" title="每秒推进 3 天">3d</button>
-    <button data-sp="7" title="每秒推进 7 天">7d</button>
-    <button data-sp="8" title="每秒推进 30 天">30d</button>
+    <button data-rate="0" title="暂停 / 继续">❚❚</button>
+    <button data-rate="1" title="真实时间 1 秒 : 1 秒">1:1</button>
+    <button data-rate="60" title="每真实秒推进 1 分钟">1m</button>
+    <button data-rate="600" title="每真实秒推进 10 分钟">10m</button>
+    <button data-rate="3600" title="每真实秒推进 1 小时">1h</button>
+    <button data-rate="21600" title="每真实秒推进 6 小时">6h</button>
+    <button data-rate="86400" title="每真实秒推进 1 天">1d</button>
+    <button data-rate="604800" title="每真实秒推进 7 天">7d</button>
+    <button data-rate="2592000" title="每真实秒推进 30 天">30d</button>
     <button data-home title="回到远景全景">全景</button>
   </div>
   <button id="lightToggle" class="light-toggle" title="打开光速可视化（L）">光速 ▸</button>
@@ -311,16 +311,12 @@
   </div>
   <div class="light-list" id="lightList"></div>
   <div class="light-ctrl">
-    <button id="lightPlay">播放</button>
+    <button id="lightPlay">暂停</button>
     <button id="lightReplay">重播</button>
-    <button data-lrate="1" title="真实时间：1 秒 = 1 光秒（光到海王星要等 4 小时）">1:1</button>
-    <button data-lrate="60">60×</button>
-    <button data-lrate="600">600×</button>
-    <button data-lrate="3600">3600×</button>
-    <button id="lightMode">线性回放</button>
     <button id="lightClose">关闭</button>
   </div>
-  <div class="light-hint">回放倍率只改变观看节奏 · 光速恒为 299792.458 km/s · 拖动标尺定位 · P 播放 / R 重播</div>
+  <div class="light-sub">统一时间流速 <span style="color:#ffd9a0" id="lightRate">—</span> · 光速与天体共用同一个 simTime</div>
+  <div class="light-hint">单一时间轴驱动光波前与天体运行 · c 恒为 299792.458 km/s · 拖动标尺定格 · 空格暂停 / R 重播</div>
 </div>
 
 <div class="labels" id="labels"></div>

@@ -1,25 +1,34 @@
 /* ============================================================
-   太阳系 · Solar · HUD
+   太阳系 · Solar · HUD（统一时间）
    信息卡、时间流速/暂停、时间与帧率
+
+   全站只有这一个时间源 simTime（距 J2000 的天数）和这一套倍率
+   （模拟秒 / 真实秒）。天体运行与光波前都由它派生，不再有第二套时钟。
    ============================================================ */
-import { qT, qStatic } from "./config.js";
+import {
+  qT, qStatic, qRate, qLight,
+  TIME_RATES, TIME_RATE_DEFAULT, TIME_RATE_LIGHT,
+} from "./config.js";
+import { advancedSimDays } from "./light-math.js";
+
+// 倍率 → HUD 文案。数值即「每真实秒推进多少模拟秒」。
+const RATE_LABELS = {
+  1: "真实时间 1:1",
+  60: "1 分钟/秒",
+  600: "10 分钟/秒",
+  3600: "1 小时/秒",
+  21600: "6 小时/秒",
+  86400: "1 天/秒",
+  604800: "7 天/秒",
+  2592000: "30 天/秒",
+};
 
 export function createHud({ onHome }) {
   let simTime = qT;
-  let speedLevel = 1;
+  let rateSec = qRate ?? (qLight ? TIME_RATE_LIGHT : TIME_RATE_DEFAULT);
   let userPaused = false;
   const pausedNow = () => userPaused;
-  // 档位 → 每真实秒推进多少「天」：1× 为现实速度，2×–8× 是「每秒推进
-  // 多少分钟/小时/天」，并非真实速度的线性倍数（按钮与读数都如实标注速率）。
-  const DAYS_PER_SEC = [0, 1 / 86400, 0.5 / 24, 3 / 24, 12 / 24, 36 / 24, 72 / 24, 168 / 24, 720 / 24];
-  const RATE_LABELS = [
-    "", "真实速度", "30 分钟/秒", "3 小时/秒", "12 小时/秒",
-    "1.5 天/秒", "3 天/秒", "7 天/秒", "30 天/秒",
-  ];
   let fpsAcc = 0, frames = 0;
-  // 光速模式期间冻结公转/自转时钟（光走 4 小时，行星位移 <0.05°）
-  let frozen = false;
-  let lightModeHook = () => false;
 
   const fpsEl = document.getElementById("fps");
   const timeEl = document.getElementById("simtime");
@@ -32,6 +41,8 @@ export function createHud({ onHome }) {
   const infoPeriod = document.getElementById("infoPeriod");
   const infoMoons = document.getElementById("infoMoons");
   const infoInc = document.getElementById("infoInc");
+
+  const rateLabel = () => RATE_LABELS[rateSec] || `${rateSec} 秒/秒`;
 
   /* ---------- 信息卡 ---------- */
   function showInfo(cfg) {
@@ -55,19 +66,18 @@ export function createHud({ onHome }) {
   /* ---------- 时间流速 / 暂停 ---------- */
   function renderSpeed() {
     const paused = pausedNow();
-    speedEl.textContent = RATE_LABELS[speedLevel] + (paused ? " ⏸" : "");
+    speedEl.textContent = rateLabel() + (paused ? " ⏸" : "");
     for (const b of document.querySelectorAll(".ctrl button")) {
-      if (b.dataset.sp === undefined) continue;
-      const bv = parseFloat(b.dataset.sp);
-      b.classList.toggle("on", bv === 0 ? paused : (!paused && bv === speedLevel));
+      if (b.dataset.rate === undefined) continue;
+      const bv = parseFloat(b.dataset.rate);
+      b.classList.toggle("on", bv === 0 ? paused : (!paused && bv === rateSec));
     }
   }
   function applySpeed(v) {
     if (v === 0) {
-      // 暂停键兼作恢复键
-      userPaused = !userPaused;
+      userPaused = !userPaused;   // 暂停键兼作恢复键
     } else {
-      speedLevel = v;
+      rateSec = v;
       userPaused = false;
     }
     renderSpeed();
@@ -80,7 +90,7 @@ export function createHud({ onHome }) {
         onHome();
         return;
       }
-      applySpeed(parseFloat(b.dataset.sp));
+      applySpeed(parseFloat(b.dataset.rate));
     });
   });
 
@@ -88,24 +98,30 @@ export function createHud({ onHome }) {
     // 不劫持聚焦在按钮/标签/表单上的空格与方向键，保证键盘可达性
     if (e.target && e.target.closest
         && e.target.closest("button, a, input, textarea, select, .lbl")) return;
-    if (e.code === "ArrowUp")   applySpeed(Math.min(8, speedLevel + 1));
-    if (e.code === "ArrowDown") applySpeed(Math.max(1, speedLevel - 1));
-    if (e.code === "Space") {
-      if (lightModeHook()) return;   // 光速模式下空格让位给光时钟
-      e.preventDefault(); applySpeed(0);
+    if (e.code === "ArrowUp" || e.code === "ArrowDown") {
+      const i = TIME_RATES.indexOf(rateSec);
+      const next = i < 0
+        ? TIME_RATE_DEFAULT
+        : TIME_RATES[Math.min(TIME_RATES.length - 1, Math.max(0,
+            i + (e.code === "ArrowUp" ? 1 : -1)))];
+      applySpeed(next);
     }
+    if (e.code === "Space") { e.preventDefault(); applySpeed(0); }
   });
 
   /* ---------- 时间推进与状态显示 ---------- */
   function advance(dt) {
-    if (!qStatic && !frozen && !pausedNow()) simTime += dt * DAYS_PER_SEC[speedLevel];
+    if (!qStatic && !pausedNow()) {
+      simTime = advancedSimDays(simTime, dt, rateSec);
+    }
   }
 
   function renderTime() {
     const absDays = Math.abs(simTime);
     const days = Math.floor(absDays);
     const hours = Math.floor((absDays - days) * 24);
-    timeEl.textContent = `J2000 ${simTime < 0 ? "−" : "+"} ${days} 天 ${String(hours).padStart(2, "0")}h`;
+    const minutes = Math.floor(((absDays - days) * 24 - hours) * 60);
+    timeEl.textContent = `J2000 ${simTime < 0 ? "−" : "+"} ${days} 天 ${String(hours).padStart(2, "0")}h ${String(minutes).padStart(2, "0")}m`;
   }
 
   // rawDt：未被 0.25s 上限钳制的真实帧间隔，FPS 才有诊断意义
@@ -127,7 +143,11 @@ export function createHud({ onHome }) {
     advance, updateHud, applySpeed,
     getSimTime: () => simTime,
     isPaused: pausedNow,
-    freeze: (v) => { frozen = v; },
-    setLightModeHook: (fn) => { lightModeHook = fn; },
+    getRate: () => rateSec,
+    rateLabel,
+    setRate: (v) => { rateSec = v; renderSpeed(); },
+    setSimTime: (days) => { simTime = days; renderTime(); },
+    setPaused: (v) => { userPaused = v; renderSpeed(); },
+    togglePaused: () => { userPaused = !userPaused; renderSpeed(); },
   };
 }
