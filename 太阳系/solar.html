@@ -41,7 +41,6 @@
     color: #fff; margin-bottom: 1px;
   }
   .hud .brand span { color: #ffd27f; }
-  .hud .sub { color: #6b7899; font-size: 11px; margin-bottom: 13px; letter-spacing: 0.14em; }
   .hud .row { color: #8794b5; }
   .hud .val { color: #ffd9a0; }
 
@@ -53,6 +52,23 @@
   }
   .tip.on { opacity: 1; }
   .tip b { color: #93a2c8; font-weight: 500; }
+  /* 操作说明默认折叠成一个小抽屉，点击把手展开 / 收起，减轻视觉污染 */
+  .tip-toggle {
+    font: inherit; font-size: 10px; letter-spacing: 0.08em;
+    color: #8e9cbe; background: rgba(10, 16, 28, 0.72);
+    border: 1px solid rgba(110, 140, 195, 0.24); border-radius: 5px;
+    padding: 3px 9px; cursor: pointer; pointer-events: auto;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tip-toggle:hover { color: #ffd9a0; border-color: rgba(255, 200, 120, 0.62); }
+  /* 展开内容脱离文档流并向上展开：容器高度恒等于把手，点击时按钮不会移动 */
+  .tip-body {
+    display: none;
+    position: absolute; right: 0; bottom: calc(100% + 9px);
+    width: 340px; max-width: calc(100vw - 44px);
+    text-align: right; pointer-events: none;
+  }
+  .tip.open .tip-body { display: block; }
 
   /* 天体信息卡 */
   .info {
@@ -135,9 +151,10 @@
     .lbl em { display: none; }
   }
 
-  /* 光速面板：HUD 底部的独立小面板 + 对数光时标尺 */
+  /* 光速开关固定在左下角，常驻可点（关闭也通过它）；面板浮在其上方 */
   .light-toggle {
-    margin-top: 9px; font: inherit; font-size: 10px; letter-spacing: 0.08em;
+    position: fixed; left: 22px; bottom: 20px; z-index: 6;
+    font: inherit; font-size: 10px; letter-spacing: 0.08em;
     padding: 4px 10px; color: #8e9cbe; background: rgba(10, 16, 28, 0.72);
     border: 1px solid rgba(110, 140, 195, 0.24); border-radius: 5px;
     cursor: pointer; pointer-events: auto; -webkit-tap-highlight-color: transparent;
@@ -147,7 +164,7 @@
     background: rgba(48, 36, 18, 0.8);
   }
   .light {
-    position: fixed; left: 22px; bottom: 20px; z-index: 5;
+    position: fixed; left: 22px; bottom: 54px; z-index: 5;
     width: 340px; max-width: calc(100vw - 44px);
     padding: 12px 14px 11px;
     border: 1px solid rgba(120, 150, 200, 0.22); border-radius: 9px;
@@ -221,9 +238,9 @@
     background: rgba(48, 36, 18, 0.8);
   }
   .light-hint { color: #55627f; font-size: 9px; margin-top: 7px; letter-spacing: 0.02em; }
-  html.light-on .tip { opacity: 0 !important; pointer-events: none; }
   @media (max-width: 560px) {
-    .light { left: 12px; right: 12px; bottom: 12px; width: auto; max-width: none; padding: 10px 12px; }
+    .light { left: 12px; right: 12px; bottom: 50px; width: auto; max-width: none; padding: 10px 12px; }
+    .light-toggle { left: 12px; bottom: 12px; }
   }
 
   .loader {
@@ -256,7 +273,6 @@
 
 <div class="hud" id="hud">
   <div class="brand">SO<span>LAR</span></div>
-  <div class="sub">程序生成太阳系 · 尺寸与轨道等比例 · J2000 轨道 / IAU 自转要素</div>
   <div class="row">时间 <span class="val" id="simtime">—</span></div>
   <div class="row">时间流速 <span class="val" id="speed">真实时间 1:1</span></div>
   <div class="row" id="fpsRow">帧率 <span class="val" id="fps">—</span></div>
@@ -273,7 +289,6 @@
     <button data-rate="2592000" title="每真实秒推进 30 天">30d</button>
     <button data-home title="回到远景全景">全景</button>
   </div>
-  <button id="lightToggle" class="light-toggle" title="打开光速可视化（L）">光速 ▸</button>
 </div>
 
 <div class="info" id="info">
@@ -287,16 +302,21 @@
 </div>
 
 <div class="tip" id="tip">
-  <div><b>左键拖动</b> 环绕观察</div>
-  <div><b>右键拖动</b> 平移视角</div>
-  <div><b>WASD</b> 移动 / 环绕视角</div>
-  <div><b>空格</b> 暂停 / 继续</div>
-  <div><b>滚轮 / 双指</b> 推拉（自由视角对准光标，聚焦时对准天体）</div>
-  <div><b>点击天体 / 标签</b> 聚焦</div>
-  <div><b>Esc / 点空白 / 滚轮拉远</b> 取消聚焦</div>
-  <div><b>双击空白 / 全景</b> 回到远景</div>
-  <div><b>L</b> 光速可视化</div>
+  <button class="tip-toggle" id="tipToggle" type="button" aria-expanded="false">操作说明 ▸</button>
+  <div class="tip-body" id="tipBody">
+    <div><b>左键拖动</b> 环绕观察</div>
+    <div><b>右键拖动</b> 平移视角</div>
+    <div><b>WASD</b> 移动 / 环绕视角</div>
+    <div><b>空格</b> 暂停 / 继续</div>
+    <div><b>滚轮 / 双指</b> 推拉（自由视角对准光标，聚焦时对准天体）</div>
+    <div><b>点击天体 / 标签</b> 聚焦</div>
+    <div><b>Esc / 点空白 / 滚轮拉远</b> 取消聚焦</div>
+    <div><b>双击空白 / 全景</b> 回到远景</div>
+    <div><b>L</b> 光速可视化</div>
+  </div>
 </div>
+
+<button id="lightToggle" class="light-toggle" title="打开/关闭光速可视化（L）">光速 ▸</button>
 
 <div class="light" id="light">
   <div class="light-title">光速 <span class="light-badge">c 恒定</span></div>
@@ -311,12 +331,10 @@
   </div>
   <div class="light-list" id="lightList"></div>
   <div class="light-ctrl">
-    <button id="lightPlay">暂停</button>
     <button id="lightReplay">重播</button>
-    <button id="lightClose">关闭</button>
   </div>
   <div class="light-sub">统一时间流速 <span style="color:#ffd9a0" id="lightRate">—</span> · 光速与天体共用同一个 simTime</div>
-  <div class="light-hint">单一时间轴 · 球外看光球 / 球内看光波扫过 · 每 5 光秒一层脉冲、严格光速 · 光线每 1 光秒一个亮点 · c 恒为 299792.458 km/s · 拖动标尺定格 · 空格暂停 / R 重播</div>
+  <div class="light-hint">单一时间轴驱动光波前与天体运行 · 光线每 1 光秒一个亮点 · c 恒为 299792.458 km/s · 拖动标尺定位（不自动暂停） · 空格暂停 / R 重播</div>
 </div>
 
 <div class="labels" id="labels"></div>

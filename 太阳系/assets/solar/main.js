@@ -6,7 +6,7 @@
    - 光速可视化：独立光行时时钟 + 波前球壳（?light=1 / L 键）
    ============================================================ */
 import * as THREE from "three";
-import { Q, qStatic, qFocus, RADIUS_SCALE } from "./config.js";
+import { Q, qStatic, qFocus } from "./config.js";
 import { SUN_CFG, MOON_CFG } from "./bodies.js";
 import { createSpace } from "./space.js";
 import { updatePlanets, updateSun } from "./body-system.js";
@@ -61,12 +61,6 @@ const hud = createHud({ onHome: () => rig.resetView() });
 rig = createCameraRig({ canvas, camera, space, hud });
 const labels = createLabels({ space, rig, camera });
 
-// ?size= 生效时，「尺寸与轨道等比例」不再成立，如实标注。
-// 必须在 createLightHud 之前：光速面板会缓存这行文案用于开关时还原。
-if (RADIUS_SCALE !== 1) {
-  const sub = document.querySelector("#hud .sub");
-  if (sub) sub.textContent = `程序生成太阳系 · 轨道等比例 · 天体半径放大 ${RADIUS_SCALE}×`;
-}
 const lightHud = createLightHud({ hud, lightView });
 
 // 调试探针按需加载，正常访问不下载解析
@@ -172,6 +166,16 @@ requestAnimationFrame(() => {
   document.getElementById("loader").classList.add("done");
   document.getElementById("hud").classList.add("on");
   document.getElementById("tip").classList.add("on");
+});
+
+// 右下角操作说明：默认折叠成一个小抽屉，点击把手切换展开 / 收起
+const tipEl = document.getElementById("tip");
+const tipToggle = document.getElementById("tipToggle");
+tipToggle.addEventListener("click", (e) => {
+  e.stopPropagation();
+  const open = tipEl.classList.toggle("open");
+  tipToggle.textContent = open ? "操作说明 ▾" : "操作说明 ▸";
+  tipToggle.setAttribute("aria-expanded", String(open));
 });
 
 addEventListener("resize", () => {

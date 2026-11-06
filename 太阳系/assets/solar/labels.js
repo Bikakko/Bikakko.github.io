@@ -1,13 +1,14 @@
 /* ============================================================
    太阳系 · Solar · 行星标签
-   3D 位置投影到屏幕，固定贴在星球正下方，不做任何布局避让
+   3D 位置投影到屏幕，固定在星球正下方，不做任何布局避让。
+   除月球与地球标签重叠时的避让外，标签一律不隐藏：屏幕外或相机背后的
+   天体，标签按其方位钉到视口边缘，拉近后依然常驻可见。
    ============================================================ */
 import * as THREE from "three";
 import { MOON_CFG, SUN_CFG } from "./bodies.js";
 
 export function createLabels({ space, rig, camera }) {
   const { planets, moonMesh, sunGroup } = space;
-  const orbit = rig.orbit;
 
   const labelsEl = document.getElementById("labels");
   // 标签点击聚焦；滚轮不做特殊处理，经冒泡走普通拉近推远
@@ -59,7 +60,7 @@ export function createLabels({ space, rig, camera }) {
     const halfW = innerWidth / 2, halfH = innerHeight / 2;
     const tanHalf = Math.tan(camera.fov * Math.PI / 360);
 
-    /* 第一遍：所有天体的屏幕数据（同时用于可见性、遮挡与月球避让） */
+    /* 第一遍：所有天体的屏幕数据（用于可见性判断、定位与月球避让） */
     for (const r of records) {
       r.p.group.getWorldPosition(projV);
       // 先取世界距离再投影；卫星的 group 有父级变换，不能用 group.position
@@ -76,27 +77,20 @@ export function createLabels({ space, rig, camera }) {
 
     /* 第二遍：可见性 + 固定位置 */
     for (const r of records) {
-      const onScreen = r.inFront && r.z < 1
-        && Math.abs(r.ndcX) < 1.2 && Math.abs(r.ndcY) < 1.2;
-      // 可见性只由相机距离决定，与是否选中无关（点选/滚轮拉近一致）：
-      // 距离下限 200 保证近距离推拉时远处仍在画面里的标签不消失
-      const hideDist = Math.max(orbit.dist * 1.8, 200);
-      let visible = onScreen && r.worldDist <= hideDist;
+      // 除月球外标签一律不隐藏。屏内贴在星球正下方；屏幕外或相机背后的
+      // 天体把标签按方位钉到视口边缘，仍常驻可见。
+      let visible = true;
 
-      // 遮挡剔除：被更近的大圆盘（且在屏内）挡住的天体不显示标签
-      if (visible) {
-        for (const o of records) {
-          if (o === r || !o.inFront || o.rPx < 30 || r.worldDist <= o.worldDist) continue;
-          const oOn = o.z < 1 && Math.abs(o.ndcX) < 1.2 && Math.abs(o.ndcY) < 1.2;
-          if (oOn && Math.hypot(r.sx - o.sx, r.sy - o.sy) < o.rPx) { visible = false; break; }
-        }
-      }
-
-      // 月球标签只在和地球屏幕位置分开时显示，否则会与地球标签叠在一起
-      if (visible && r.p.cfg === MOON_CFG && earthRec) {
+      // 唯一的例外：月球只在该天体本身在屏内、且与地球标签分开时显示；
+      // 否则隐藏（月球可以隐藏，也不该被钉到远离地球的屏幕边缘）
+      if (r.p.cfg === MOON_CFG && earthRec) {
+        const mOn = r.inFront && r.z < 1
+          && Math.abs(r.ndcX) < 1 && Math.abs(r.ndcY) < 1;
         const eOn = earthRec.inFront && earthRec.z < 1
-          && Math.abs(earthRec.ndcX) < 1.2 && Math.abs(earthRec.ndcY) < 1.2;
-        if (eOn && Math.hypot(r.sx - earthRec.sx, r.sy - earthRec.sy) < 24) visible = false;
+          && Math.abs(earthRec.ndcX) < 1 && Math.abs(earthRec.ndcY) < 1;
+        if (!mOn || (eOn && Math.hypot(r.sx - earthRec.sx, r.sy - earthRec.sy) < 24)) {
+          visible = false;
+        }
       }
 
       if (!visible) {
@@ -106,13 +100,31 @@ export function createLabels({ space, rig, camera }) {
         continue;
       }
 
-      // 固定在星球正下方的固定偏移（球面下缘 +10px），不避让、不缓动；
+      const inView = r.inFront && r.z < 1
+        && Math.abs(r.ndcX) < 1 && Math.abs(r.ndcY) < 1;
+      let outX, outY;
+      if (inView) {
+        // 固定在星球正下方的固定偏移（球面下缘 +10px），不避让、不缓动
+        outX = r.sx;
+        outY = Math.min(r.sy + r.rPx + 10, innerHeight - 26);
+      } else {
+        // 屏幕坐标 y 向下；相机背后的天体投影方向是翻转的，取反才是真实方位
+        let dx = r.ndcX, dy = -r.ndcY;
+        if (!r.inFront) { dx = -dx; dy = -dy; }
+        const m = Math.max(Math.abs(dx), Math.abs(dy), 1e-6);
+        const edge = 64;   // 距视口边缘的内缩，避免标签被裁掉
+        outX = halfW + (dx / m) * (halfW - edge);
+        outY = halfH + (dy / m) * (halfH - edge);
+      }
+      // 夹进视口，避免屏幕外定位撑出滚动条
+      outX = Math.min(Math.max(outX, 34), innerWidth - 34);
+      outY = Math.min(Math.max(outY, 20), innerHeight - 26);
+
       // 用 transform 定位避免每帧触发布局，位置没变则不重写（省重绘）
-      const syOut = Math.min(r.sy + r.rPx + 10, innerHeight - 26);
-      if (!r.shown || Math.abs(r.sx - r.lastX) > 0.5 || Math.abs(syOut - r.lastY) > 0.5) {
-        r.el.style.transform = `translate(${r.sx.toFixed(1)}px, ${syOut.toFixed(1)}px) translate(-50%, 0)`;
-        r.lastX = r.sx;
-        r.lastY = syOut;
+      if (!r.shown || Math.abs(outX - r.lastX) > 0.5 || Math.abs(outY - r.lastY) > 0.5) {
+        r.el.style.transform = `translate(${outX.toFixed(1)}px, ${outY.toFixed(1)}px) translate(-50%, 0)`;
+        r.lastX = outX;
+        r.lastY = outY;
       }
       r.el.tabIndex = 0;
       r.el.classList.add("on");

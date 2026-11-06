@@ -2,8 +2,9 @@
    太阳系 · Solar · 光速 HUD（统一时间）
 
    没有第二套时钟：光行时 = (hud.getSimTime() - emissionT) · 86400。
-   播放/暂停/重播/标尺拖动全部作用于 hud 的同一个 simTime，因此光波前
-   与天体运行永远同步，面板上只显示一个时间流速。
+   重播/标尺拖动全部作用于 hud 的同一个 simTime，因此光波前与天体运行
+   永远同步，面板上只显示一个时间流速。标尺拖动只定位、不改变播放状态；
+   面板的开/关统一由左下角的开关按钮负责。
    ============================================================ */
 import {
   qLight, qLightT, qLightStatic,
@@ -26,11 +27,7 @@ export function createLightHud({ hud, lightView }) {
   const ticksEl = document.getElementById("lightTicks");
   const planetsEl = document.getElementById("lightPlanets");
   const listEl = document.getElementById("lightList");
-  const playBtn = document.getElementById("lightPlay");
   const replayBtn = document.getElementById("lightReplay");
-  const closeBtn = document.getElementById("lightClose");
-  const subHeader = document.querySelector("#hud .sub");
-  const originalSub = subHeader ? subHeader.textContent : "";
 
   let on = false;
   let emissionT = hud.getSimTime();   // 光脉冲发射历元（天）
@@ -98,11 +95,7 @@ export function createLightHud({ hud, lightView }) {
     for (const r of listRecs) r.el.classList.toggle("done", r.seconds <= sec);
     for (const r of markerRecs) r.el.classList.toggle("done", r.seconds <= sec);
 
-    const paused = hud.isPaused();
-    playBtn.textContent = paused ? "继续" : "暂停";
-    playBtn.classList.toggle("on", !paused);
     if (rateEl) rateEl.textContent = hud.rateLabel();
-    if (subHeader) subHeader.textContent = `${originalSub} · 统一时间 ${hud.rateLabel()}`;
   }
 
   function tick() {
@@ -114,7 +107,6 @@ export function createLightHud({ hud, lightView }) {
 
   function setOn(next) {
     on = next;
-    document.documentElement.classList.toggle("light-on", on);
     root.classList.toggle("on", on);
     toggleBtn.classList.toggle("on", on);
     toggleBtn.textContent = on ? "光速 ▾" : "光速 ▸";
@@ -123,8 +115,6 @@ export function createLightHud({ hud, lightView }) {
       emissionT = hud.getSimTime();
       buildArrivals();
       render();
-    } else if (subHeader) {
-      subHeader.textContent = originalSub;
     }
   }
 
@@ -147,8 +137,8 @@ export function createLightHud({ hud, lightView }) {
     render();
   }
   function scrubTo(sec) {
+    // 只把统一时间定位到目标光行时，不改变播放状态（拖动不再自动暂停）
     hud.setSimTime(emissionPlusSeconds(emissionT, Math.min(endSeconds, Math.max(0, sec))));
-    hud.setPaused(true);   // 拖动时间轴即定格
     render();
   }
   function applyScrub(clientX) {
@@ -159,8 +149,6 @@ export function createLightHud({ hud, lightView }) {
   }
 
   toggleBtn.addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
-  closeBtn.addEventListener("click", () => setOn(false));
-  playBtn.addEventListener("click", togglePlay);
   replayBtn.addEventListener("click", replay);
 
   barEl.addEventListener("pointerdown", (e) => {
