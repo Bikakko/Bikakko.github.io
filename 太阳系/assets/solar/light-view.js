@@ -2,14 +2,15 @@
    太阳系 · Solar · 3D 光速视觉层（主波前 + 严格光速波纹）
    - 主波前球：半径 = c·lightSec，带唯一一套经纬网和三个正交大圆，
      表示光已经走到的最远处。
-   - 波纹球：每 5 光秒一层，半径 = c·((k+phase)·step)，phase 连续滑动，
-     dR/dt 恒等于 c —— 波纹严格以光速向外扩散，不会超光速；两端淡入
-     淡出掩盖相位接力。全部是真实 3D 半透明球面，普通混合不累积亮度。
+   - 波纹球：每个球壳在固定的 emit_k = k·5 光秒发出，半径 = c·(t−emit_k)，
+     dR/dt 恒等于 c。按相机像素尺度做 2 的幂 LOD 抽样（stride 与 t 无关），
+     球壳铺满 0..主波前全程、间距均匀、数量恒定；窗口两端淡入淡出隐藏
+     增删。全部是真实 3D 半透明球面，普通混合 + fresnel 不累积亮度。
    - 每条太阳→行星光线按主波前裁断，并每隔 1 光秒显示一个亮点，
      亮点随波前以光速向外流动。
    ============================================================ */
 import * as THREE from "three";
-import { PLANETS } from "./bodies.js";
+import { SUN_CFG, PLANETS } from "./bodies.js";
 import { orbitalPosition } from "./orbit-math.js";
 import { pulseRadii, frontRadius } from "./light-math.js";
 import {
@@ -98,7 +99,9 @@ export function createLightView(scene, camera) {
       ${LOGDEPTH_PARS_FRAG}
       void main() {
         float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vView))), 2.0);
-        float a = uOpacity * uLayerFade * (0.12 + 0.88 * fres);
+        // 球心方向 fres≈0 且基数压到 0.04：N 层同心球壳在中心也不会
+        // 累积成亮团（用户明确要求「不要越靠近中心越亮」）。
+        float a = uOpacity * uLayerFade * (0.04 + 0.96 * fres);
         gl_FragColor = vec4(uColor, a);
         ${LOGDEPTH_FRAG}
       }
@@ -131,7 +134,7 @@ export function createLightView(scene, camera) {
     group.add(o);
   }
 
-  /* ---------- 波纹球槽位（每 5 光秒一层） ---------- */
+  /* ---------- 波纹球槽位（LOD 抽样后的可见球壳，物理上每 5 光秒一个） ---------- */
   const ripples = [];
   for (let i = 0; i < MAX_PULSES; i++) {
     const mat = sphereMatTemplate.clone();
@@ -198,28 +201,39 @@ export function createLightView(scene, camera) {
   let cameraInside = false;
 
   function update(lightSec, simTime) {
-    const mainR = frontRadius(lightSec);
-    for (const o of mainParts) o.scale.setScalar(mainR);
-
-    // 波纹严格光速：间隔是固定光秒，与观看倍率无关
-    const radii = pulseRadii(lightSec, qPulseLightSec);
-    const last = radii.length - 1;
-    for (let i = 0; i < ripples.length; i++) {
-      const r = ripples[i];
-      const active = i < radii.length;
-      r.mesh.visible = active;
-      if (!active) continue;
-      r.mesh.scale.setScalar(radii[i]);
-      // 最外层 / 最内层各淡出两层，相位接力发生在不可见处
-      const fade = Math.min(1, Math.max(0, i / 2))
-        * Math.min(1, Math.max(0, (last - i) / 2));
-      r.mat.uniforms.uLayerFade.value = fade;
-    }
-
     // rig.updateCamera 只改了 position/quaternion，renderer.render 才会刷新
     // matrixWorld；本函数在 render 之前执行，需自行取本帧相机位置。
     camera.updateMatrixWorld();
     camera.getWorldPosition(_camPos);
+
+    const mainR = frontRadius(lightSec);
+    for (const o of mainParts) o.scale.setScalar(mainR);
+
+    // 可见半径窗口只由相机决定（不含 t）→ stride 在播放中恒定，
+    // 球壳索引集合不会重排，每层严格以 c 平滑推进。
+    const camDist = Math.max(_camPos.length(), SUN_CFG.radius * 2);
+    // 屏幕上可见的横向半径尺度：全景下覆盖整个光球，拉近时窗口收窄，
+    // stride 随之降到 1，就能看到逐 5 光秒的细波纹。只依赖相机，不含 t。
+    const viewRadius = Math.max(
+      camDist * Math.tan(camera.fov * Math.PI / 360),
+      SUN_CFG.radius * 8,
+    );
+    const radii = pulseRadii(lightSec, qPulseLightSec, viewRadius);
+    const n = radii.length;
+    for (let i = 0; i < ripples.length; i++) {
+      const r = ripples[i];
+      const active = i < n;
+      r.mesh.visible = active;
+      if (!active) continue;
+      r.mesh.scale.setScalar(radii[i]);
+      // 两端各淡出两层：窗口边界的球壳增删发生在不可见处，
+      // 主波前处的 i=0 也淡出，避免与带经纬网的主球重合。
+      const fade = n <= 3 ? 1
+        : Math.min(1, Math.max(0, i / 2))
+          * Math.min(1, Math.max(0, (n - 1 - i) / 2));
+      r.mat.uniforms.uLayerFade.value = fade;
+    }
+
     cameraInside = _camPos.lengthSq() < mainR * mainR;
 
     for (const r of rays) {

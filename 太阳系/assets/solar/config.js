@@ -55,9 +55,10 @@ export const TIME_RATE_DEFAULT = 1;      // 真实时间 1:1
 // 打开光速模式时默认也是 1:1（真实时间），可用 ?rate= 指定其它档
 
 // 脉冲间隔按「光行时」固定为 5 光秒（物理量，与观看倍率无关）。
-// 球层半径 = c·(已传播的光秒)，因此波纹严格以光速向外扩散；不再按主波前
-// 归一化（那会让 dR/dt 变成 c 的若干倍，看起来明显超光速）。
-// 层数上限压低：多层半透明球面叠加会糊住内部，且经纬线只画一套。
+// 每个球壳在固定的 emit_k = k·5 光秒发出，半径 = c·(t − emit_k)，
+// 因此 dR/dt ≡ c 严格光速；k 覆盖全部已发射球壳，波纹铺满 0..主波前。
+// MAX_PULSES 只是渲染槽位 / LOD 目标层数：pulseStride 按相机像素尺度
+// 抽样，把可见球壳数压到这个量级，避免中心叠加与密密麻麻。
 export const PULSE_INTERVAL_LIGHT_SEC = 5;
 export const MAX_PULSES              = 32;
 export const PULSE_FALLBACK_SEC      = PULSE_INTERVAL_LIGHT_SEC;

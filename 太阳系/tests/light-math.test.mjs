@@ -2,7 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   lightTimeSeconds, frontRadius, lightArrivals, lightSecondsPerAU,
-  lightSecondsSince, emissionPlusSeconds, advancedSimDays, pulseRadii,
+  lightSecondsSince, emissionPlusSeconds, advancedSimDays,
+  pulseRadii, pulseStride,
   toLogAxis, fromLogAxis,
   formatClock, formatShort, formatLightTime,
   LOG_AXIS_MIN, LOG_AXIS_MAX, LIGHT_TICKS,
@@ -129,42 +130,72 @@ test("时间格式化", () => {
 test("波纹严格以光速扩散：Δt=1 光秒，每层半径增加 c·1", () => {
   assert.equal(PULSE_INTERVAL_LIGHT_SEC, 5);
   assert.equal(MAX_PULSES, 32);
-  const step = 5;
-  const a = pulseRadii(1000, step);
-  const b = pulseRadii(1001, step);
-  assert.equal(a.length, MAX_PULSES, "层数恒定");
-  for (let i = 0; i < MAX_PULSES - 2; i++) {
-    // 跳过最内层（半径受日面半径下限 clamp）
+  const view = 20;                     // 固定相机窗口，不含 t
+  const a = pulseRadii(1000, 5, view);
+  const b = pulseRadii(1001, 5, view);
+  // 窗口边界只会在最内端增删一层（日面淡入/波前淡出），绝不整体重排
+  assert.ok(Math.abs(a.length - b.length) <= 1, "不整体重排（无心跳）");
+  const n = Math.min(a.length, b.length);
+  // 从大半径端对齐；跳过最内层（半径受日面半径下限 clamp）
+  for (let i = 0; i < n - 2; i++) {
     assert.ok(close(b[i] - a[i], UNITS_PER_LIGHT_SEC, 1e-9),
       `第 ${i} 层应以光速推进，实际 ${b[i] - a[i]}`);
   }
-  // 球层由大到小
   for (let i = 1; i < a.length; i++) assert.ok(a[i] <= a[i - 1] + 1e-9);
 });
 
-test("波纹按固定光秒间隔，与观看倍率无关", () => {
-  // 不同的物理间隔下，每层仍严格以 c 推进（不再乘 rateSec 或归一化到主波前）
-  for (const step of [5, 60, 600]) {
-    const a = pulseRadii(1000, step);
-    const b = pulseRadii(1001, step);
-    assert.equal(a.length, MAX_PULSES, `step=${step} 层数`);
-    for (let i = 0; i < MAX_PULSES - 2; i++) {
-      assert.ok(close(b[i] - a[i], UNITS_PER_LIGHT_SEC, 1e-9),
-        `step=${step} 第 ${i} 层应以光速推进`);
-    }
+test("波纹铺满 0..主波前全程，不再只挤在中心一小块", () => {
+  const t = 15005, R = frontRadius(t), view = 380;   // 全景相机窗口
+  const radii = pulseRadii(t, 5, view);
+  assert.ok(radii.length > 8, `层数 ${radii.length} 应铺开可见全程`);
+  assert.ok(radii.length <= MAX_PULSES);
+  assert.ok(close(radii[0], R, 1e-9), "最外层紧贴主波前");
+  assert.ok(radii[radii.length - 1] < R * 0.1,
+    `最内层 ${radii[radii.length - 1]} 应深入内太阳系，而不是只占主波前的一小部分`);
+  // 相邻球壳间距恒为 stride·step·c（落在真实 5 光秒网格上）
+  const stride = pulseStride(view, 5, MAX_PULSES);
+  for (let i = 1; i < radii.length - 1; i++) {
+    assert.ok(close(radii[i - 1] - radii[i], stride * 5 * UNITS_PER_LIGHT_SEC, 1e-6));
   }
-  assert.deepEqual(pulseRadii(4321, 5), pulseRadii(4321, 5));
 });
 
-test("非法间隔与负光行时不产生 NaN", () => {
-  const a = pulseRadii(1200, 0);
-  assert.equal(a.length, MAX_PULSES);
-  assert.ok(a.every(Number.isFinite));
-  assert.equal(a.length, pulseRadii(1200, PULSE_FALLBACK_SEC).length);
+test("LOD 步长只依赖相机、不依赖 t；拉近可见逐 5 光秒", () => {
+  const s380 = pulseStride(380, 5, MAX_PULSES);
+  assert.ok(s380 >= 64 && s380 <= 256);
+  assert.equal(s380 & (s380 - 1), 0, "步长是 2 的幂，相机小幅移动不变档");
+  assert.equal(pulseStride(2, 5, MAX_PULSES), 1,
+    "拉近到太阳附近回到 5 光秒网格，每个球壳都可见");
+  assert.ok(pulseStride(2, 5, MAX_PULSES) < s380);
+  // pulseStride 与 t 无关：同一相机下 stride 恒定 → 播放中不重排球阵
+  for (const t of [500, 1000, 5000, 15005]) {
+    assert.equal(pulseStride(380, 5, MAX_PULSES), s380);
+    assert.ok(pulseRadii(t, 5, 380).every(Number.isFinite));
+  }
+  // 自定义物理间隔（?pulse=）下最外层仍严格以 c 推进
+  for (const step of [5, 60, 600]) {
+    const a = pulseRadii(1000, step, 380);
+    const b = pulseRadii(1001, step, 380);
+    assert.ok(close(b[0] - a[0], UNITS_PER_LIGHT_SEC, 1e-9),
+      `step=${step} 最外层应以光速推进`);
+  }
+  assert.deepEqual(pulseRadii(4321, 5, 380), pulseRadii(4321, 5, 380));
+});
 
-  const b = pulseRadii(-100, 5);
-  assert.equal(b.length, MAX_PULSES);
+test("非法参数、负光行时、t=0 不产生 NaN 或空画面", () => {
+  const a = pulseRadii(1200, 0, 380);
+  assert.ok(a.length >= 1 && a.every(Number.isFinite));
+  assert.equal(a.length, pulseRadii(1200, PULSE_FALLBACK_SEC, 380).length);
+
+  const b = pulseRadii(-100, 5, 380);
+  assert.equal(b.length, 1);
   assert.ok(b.every(Number.isFinite));
-  // t=0 时所有球层都退到日面半径
   assert.ok(close(b[0], SUN_CFG.radius, 1e-9));
+
+  const c = pulseRadii(0, 5, 380);
+  assert.equal(c.length, 1);
+  assert.ok(close(c[0], SUN_CFG.radius, 1e-9));
+
+  assert.ok(pulseRadii(1200, 5, NaN).every(Number.isFinite));
+  assert.ok(pulseRadii(1200, 5, -5).every(Number.isFinite));
+  assert.equal(pulseStride(Infinity, 5, 32), 1);
 });
