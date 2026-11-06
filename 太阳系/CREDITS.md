@@ -9,8 +9,10 @@
 | --- | --- | --- | --- |
 | earth_2k.jpg | NASA Earth Observatory「Blue Marble Next Generation」(Reto Stöckli)，200412 全球无云合成（含地形/水深）；经 Wikimedia Commons 公有领域镜像降采样至 2048×1024 | NASA Earth Observatory (Reto Stöckli) | 公有领域 (PD-USGov NASA) |
 | moon_2k.jpg | NASA/GSFC Scientific Visualization Studio「CGI Moon Kit」(svs.gsfc.nasa.gov/4720)，LROC/LOLA 彩色全球底图 lroc_color_poles_4k.tif，4096×2048 → 2048×1024（原件经 Wayback 存档取得） | NASA/GSFC/Scientific Visualization Studio | 公有领域 (NASA) |
+| mars_2k.jpg | USGS Astrogeology「Mars_Viking_MDIM21_ClrMosaic_global」，Viking 轨道器红/绿滤光片真彩色全球镶嵌图（1 km/px，由 232 m 原图降采样）；经 Wikimedia Commons 1920px 缩略图取得后重采样至 2048×1024，未做人工调色 | NASA / JPL / USGS Astrogeology Science Center | 公有领域 (PD-USGov) |
+| mercury_2k.jpg | USGS Astrogeology「MESSENGER MDIS Global Color Mosaic 665m v3」（1000/750/430 nm 自然色合成），官方 1024px browse 档 2× 放大至 2048×1024 | USGS Astrogeology / MESSENGER Team / Arizona State University | 公有领域 (USGS) |
 
-其余行星贴图与土星环素材的致谢随对应阶段补充。
+木星与土星贴图的致谢随阶段3补充。
 
 ## 土星环光学深度剖面（assets/data/saturn_ring_tau.csv）
 

@@ -172,15 +172,21 @@ export function makePlanetMaterial(cfg) {
         // 柔化明暗交界
         float lightAmt = pow(ndl, 0.62);
 
+        // 位图已是 display-referred sRGB（采样值即最终显示值），不再套用程序化材质
+        // 的线性空间高增益，否则亮区过曝裁剪；程序化底色经 THREE.Color 转入线性
+        // 工作空间，需要更高增益补偿。按 uHasMap 分支取增益与环境光。
+        float lightGain = uHasMap > 0.5 ? 1.15 : 1.75;
+        float ambientAmt = uHasMap > 0.5 ? 0.08 : 0.30;
+
         // 背光面留一点自发光，避免死黑
-        vec3 ambient = col * 0.30;
+        vec3 ambient = col * ambientAmt;
 
         // 边缘光（大气散射感）
         vec3 V = normalize(cameraPosition - vWorldPos);
         float fres = pow(1.0 - max(dot(normalize(vNormalW), V), 0.0), 3.0);
         vec3 rim = vec3(0.45, 0.62, 1.0) * fres * 0.32 * lightAmt;
 
-        vec3 finalCol = col * lightAmt * 1.75 + ambient + rim;
+        vec3 finalCol = col * lightAmt * lightGain + ambient + rim;
 
         gl_FragColor = vec4(finalCol, 1.0);
         ${LOGDEPTH_FRAG}

@@ -92,6 +92,8 @@ const MERCURY = defineBody({
   moons: 0, moonsAsOf: "2026-11",
   colorA: 0x9a8f85, colorB: 0x5c524a, colorC: 0xc9bdb0,
   noiseFreq: 9.0, bandAmp: 0.0,
+  // MESSENGER MDIS 665m 自然色全球 mosaic（USGS PD）；陨石坑与辐射纹真实
+  mapUrl: "assets/textures/mercury_2k.jpg",
 });
 
 /* ============================================================
@@ -117,8 +119,12 @@ const VENUS = defineBody({
   obliquityDeg: 177.362,
 
   moons: 0, moonsAsOf: "2026-11",
-  colorA: 0xe8c98a, colorB: 0xb08a4c, colorC: 0xfff0c4,
-  noiseFreq: 4.4, bandAmp: 0.55,
+  // 可见光下的金星是几乎均匀的淡黄白云层，对比很弱；
+  // 旧 0.55 带状振幅会做出气态巨行星般的条纹，与真实云层不符。UV 标记未建模。
+  // 程序化分支盘心总增益约 ×2.05，且 hex 经 THREE.Color 转线性空间，故通道
+  // 取值按增益反推、压低到 sRGB≤185，避免亮区裁剪到 255（显示约 205–250 淡奶黄）
+  colorA: 0xb3b0a4, colorB: 0xa8a496, colorC: 0xb8b4a6,
+  noiseFreq: 3.2, bandAmp: 0.10,
 });
 
 /* ============================================================
@@ -233,6 +239,8 @@ const MARS = defineBody({
   moons: 2, moonsAsOf: "2026-11",
   colorA: 0xb5573a, colorB: 0x7d3a26, colorC: 0xe8b08c,
   noiseFreq: 6.0, bandAmp: 0.0,
+  // MGS MOLA 彩色晕渲全球 mosaic（USGS PD）：锈色地表、暗色标记与极冠
+  mapUrl: "assets/textures/mars_2k.jpg",
 });
 
 /* ============================================================
