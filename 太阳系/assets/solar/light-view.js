@@ -226,6 +226,7 @@ export function createLightView(scene, camera) {
   const _v = new THREE.Vector3();
   const _camPos = new THREE.Vector3();
   let cameraInside = false;
+  let lastBeadCount = -1;
 
   function update(lightSec, simTime) {
     const R = frontRadius(lightSec);
@@ -242,12 +243,14 @@ export function createLightView(scene, camera) {
     const projScale = (window.innerHeight * 0.5) / Math.tan(camera.fov * Math.PI / 360);
     const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
 
+    let maxRayLen = 0;
     for (const r of rays) {
       orbitalPosition(r.cfg, simTime, _v);
       r.arr[0] = 0; r.arr[1] = 0; r.arr[2] = 0;
       r.arr[3] = _v.x; r.arr[4] = _v.y; r.arr[5] = _v.z;
       r.geo.attributes.position.needsUpdate = true;
       r.mat.uniforms.uFront.value = R;
+      maxRayLen = Math.max(maxRayLen, _v.length());
 
       const bu = r.beadMat.uniforms;
       bu.uFront.value = R;
@@ -255,6 +258,18 @@ export function createLightView(scene, camera) {
       bu.uRayLen.value = _v.length();
       bu.uProjScale.value = projScale;
       bu.uPixelRatio.value = pixelRatio;
+    }
+
+    // 8 条光线共享同一份序号缓冲：drawRange 取「最长有效光线」所需的点数。
+    // 有效亮点 k 满足 d = R − k·spacing ∈ [0, rayLen]，故最大序号由
+    // min(R, 最长光线) 决定；短光线多出的顶点仍由 shader 的 d > uRayLen
+    // 裁掉，但不再让全部 20000 顶点每帧白跑 vertex shader（水星只需 ~190 点，
+    // 波前刚出发时更是只需几个点）。
+    const beadCount = Math.min(MAX_BEADS,
+      Math.floor(Math.min(R, maxRayLen) / UNITS_PER_LIGHT_SEC) + 1);
+    if (beadCount !== lastBeadCount) {
+      beadGeo.setDrawRange(0, beadCount);
+      lastBeadCount = beadCount;
     }
   }
 
