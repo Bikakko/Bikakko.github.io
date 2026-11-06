@@ -53,15 +53,19 @@ export function poleAt(cfg, days) {
   return poleEquatorialToEcliptic(ra, dec);
 }
 
-// 自转角：先按周期取模，避免极大 simTime 乘速率后溢出
+// 自转角 W = W0 + Ẇ·d + Ẅ·d²：线性项先按周期取模，避免极大 simTime
+// 乘速率后溢出；二次项必须用完整 days——若也取模，Ẅ·d² 每圈被重置，
+// 长历元下自转相位会持续漂移。最后整体 mod 360 保证精度。
 export function spinAngleRad(spin, days) {
   const rate = spin.wRateDegPerDay;
-  if (!Number.isFinite(rate) || rate === 0) return (spin.w0Deg || 0) * DEG;
+  const w0 = spin.w0Deg || 0;
+  if (!Number.isFinite(rate) || rate === 0) return w0 * DEG;
+  if (!Number.isFinite(days)) return w0 * DEG;
   const period = 360 / Math.abs(rate);
   let d = days % period;
   if (d < 0) d += period;
-  const deg = (spin.w0Deg || 0) + rate * d + (spin.wRate2DegPerDay2 || 0) * d * d;
-  return deg * DEG;
+  const deg = w0 + rate * d + (spin.wRate2DegPerDay2 || 0) * days * days;
+  return (((deg % 360) + 360) % 360) * DEG;
 }
 
 // 自转轴（角速度方向）与轨道法线的夹角。
