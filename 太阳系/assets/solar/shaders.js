@@ -3,6 +3,7 @@
    通用噪声（GLSL）、行星表面材质、对数深度片段
    ============================================================ */
 import * as THREE from "three";
+import { WHITE_TEX } from "./textures.js";
 
 /* ------------------------------------------------------------
    对数深度：与 three.js 内建材质使用同一编码。
@@ -74,15 +75,26 @@ export function makePlanetMaterial(cfg) {
       uFreq:      { value: cfg.noiseFreq },
       uBandAmp:   { value: cfg.bandAmp },
       uEarth:     { value: cfg.earthLike ? 1 : 0 },
+      // 位图渐进增强：未加载时采样 1×1 白图、uHasMap=0 走程序化底色
+      uMap:       { value: WHITE_TEX },
+      uHasMap:    { value: 0 },
+      // 扁球缩放补偿：mesh.scale.y=s 时预乘 (1,1/s²,1)，见顶点着色器注释
+      uNScale:    { value: new THREE.Vector3(1, 1, 1) },
     },
     vertexShader: /* glsl */ `
+      uniform vec3 uNScale;
+      varying vec2 vUv;
       varying vec3 vPos;
       varying vec3 vNormalW;
       varying vec3 vWorldPos;
       ${LOGDEPTH_PARS_VERT}
       void main() {
+        vUv = uv;
         vPos = position;
-        vNormalW = normalize(mat3(modelMatrix) * normal);
+        // 扁球缩放 mesh.scale.y=s 时，世界法线 = R·S⁻¹·n。
+        // mat3(modelMatrix)=R·S，给 n 预乘 (1,1/s²,1) 即 R·S·S⁻²·n = R·S⁻¹·n；
+        // 直接 mat3(modelMatrix)*normal 会把缩放当旋转，扁行星的光照明暗界会错位
+        vNormalW = normalize(mat3(modelMatrix) * (normal * uNScale));
         vec4 wp = modelMatrix * vec4(position, 1.0);
         vWorldPos = wp.xyz;
         gl_Position = projectionMatrix * viewMatrix * wp;
@@ -97,7 +109,10 @@ export function makePlanetMaterial(cfg) {
       uniform float uFreq;
       uniform float uBandAmp;
       uniform float uEarth;
+      uniform sampler2D uMap;
+      uniform float uHasMap;
 
+      varying vec2 vUv;
       varying vec3 vPos;
       varying vec3 vNormalW;
       varying vec3 vWorldPos;
@@ -108,30 +123,41 @@ export function makePlanetMaterial(cfg) {
       void main() {
         vec3 p = normalize(vPos);
 
-        // 基础噪声
-        float n = fbm3(p * uFreq + 13.0, 5);
+        vec3 col;
+        float n = 0.0;
+        if (uHasMap > 0.5) {
+          // 真实位图覆盖程序化底色。自定义 shader 绕过 three 色彩管线：
+          // 位图按 sRGB 存储、原样采样（NoColorSpace）输出即显示正确，见 textures.js
+          col = texture2D(uMap, vUv).rgb;
+        } else {
+          // 基础噪声（无位图时才计算，省下每像素 fbm 开销）
+          n = fbm3(p * uFreq + 13.0, 5);
 
-        float bands = n;
-        if (uBandAmp > 0.0) {
-          float lat = p.y;
-          float bandN = fbm3(vec3(p.x * uFreq * 0.7, lat * uFreq * 2.6, p.z * uFreq * 0.7) + 3.0, 5);
-          float bandWave = sin(lat * 22.0 + bandN * 5.5) * 0.5 + 0.5;
-          bands = mix(n, bandWave, uBandAmp * 0.75);
+          float bands = n;
+          if (uBandAmp > 0.0) {
+            float lat = p.y;
+            float bandN = fbm3(vec3(p.x * uFreq * 0.7, lat * uFreq * 2.6, p.z * uFreq * 0.7) + 3.0, 5);
+            float bandWave = sin(lat * 22.0 + bandN * 5.5) * 0.5 + 0.5;
+            bands = mix(n, bandWave, uBandAmp * 0.75);
+          }
+
+          col = mix(uColorB, uColorA, smoothstep(0.32, 0.68, bands));
+          col = mix(col, uColorC, smoothstep(0.70, 0.92, bands) * 0.65);
         }
 
-        vec3 col = mix(uColorB, uColorA, smoothstep(0.32, 0.68, bands));
-        col = mix(col, uColorC, smoothstep(0.70, 0.92, bands) * 0.65);
-
-        // 地球：把噪声当海陆，加极冠
+        // 地球：有位图时只保留动态云层（Blue Marble 本身无云）；
+        // 无位图时回退到噪声海陆 + 极冠
         if (uEarth > 0.5) {
-          float land = smoothstep(0.52, 0.56, n);
-          vec3 ocean = mix(vec3(0.06, 0.22, 0.42), vec3(0.12, 0.36, 0.60), smoothstep(0.3, 0.55, n));
-          vec3 ground = mix(vec3(0.24, 0.42, 0.20), vec3(0.52, 0.46, 0.28), smoothstep(0.55, 0.75, n));
-          col = mix(ocean, ground, land);
+          if (uHasMap < 0.5) {
+            float land = smoothstep(0.52, 0.56, n);
+            vec3 ocean = mix(vec3(0.06, 0.22, 0.42), vec3(0.12, 0.36, 0.60), smoothstep(0.3, 0.55, n));
+            vec3 ground = mix(vec3(0.24, 0.42, 0.20), vec3(0.52, 0.46, 0.28), smoothstep(0.55, 0.75, n));
+            col = mix(ocean, ground, land);
 
-          // 极地冰盖
-          float ice = smoothstep(0.80, 0.94, abs(p.y));
-          col = mix(col, vec3(0.94, 0.97, 1.0), ice);
+            // 极地冰盖
+            float ice = smoothstep(0.80, 0.94, abs(p.y));
+            col = mix(col, vec3(0.94, 0.97, 1.0), ice);
+          }
 
           // 云层
           float cloud = fbm3(p * 5.2 + vec3(uTime * 0.02, 0.0, 0.0), 5);

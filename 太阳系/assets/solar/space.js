@@ -2,7 +2,8 @@
    太阳系 · Solar · 场景
    星空、太阳、行星、轨道、土星环、月球
    - 每个天体的数据与专属参数在 bodies.js 中按天体分段
-   - 行星表面：着色器程序化噪声，不加载任何贴图
+   - 行星表面：程序化噪声兜底；带 mapUrl 的天体异步加载真实位图覆盖（textures.js）
+   - 扁球体：几何取赤道半径，scale.y=极/赤道（pck00011 RADII）
    - 自定义 ShaderMaterial 都注入对数深度片段，与内建材质共用同一深度编码
    ============================================================ */
 import * as THREE from "three";
@@ -15,6 +16,7 @@ import {
 import { makeMinDot } from "./dots.js";
 import { orbitalPointAtE, barycenterCorrectedPosition } from "./orbit-math.js";
 import { makePose } from "./pose.js";
+import { attachBodyMap } from "./textures.js";
 
 /* ============================================================
    1. 星空背景
@@ -314,14 +316,31 @@ function buildRing(cfg) {
 /* ============================================================
    5. 卫星
    ============================================================ */
-function buildSatellite(cfg) {
-  const geo = new THREE.SphereGeometry(cfg.radius, 24, 18);
+function buildSatellite(cfg, anisotropy) {
+  // 月球贴近聚焦时要看清真实陨石坑：24×18 的轮廓剪影明显是多边形，
+  // 96×64 把弦高降到半径的 0.1% 以下
+  const geoR = cfg.shape ? kmToUnit(cfg.shape.equatorialKm) : cfg.radius;
+  const geo = new THREE.SphereGeometry(geoR, 96, 64);
   const mat = cfg.material === "standard"
     ? new THREE.MeshStandardMaterial({ color: cfg.colorA, roughness: 1.0, metalness: 0 })
     : makePlanetMaterial(cfg);
   const mesh = new THREE.Mesh(geo, mat);
+  applyShape(mesh, cfg);
+  if (cfg.mapUrl) attachBodyMap(mat, cfg.mapUrl, { anisotropy });
   mesh.userData = cfg;
   return mesh;
+}
+
+// 扁球压扁：scale.y = 极半径/赤道半径（数据来自 bodies.js shape / pck00011）。
+// 自定义 shader 的世界法线 = R·S⁻¹·n，需要在 mat3(modelMatrix) 前预乘 S⁻²
+// （见 shaders.js uNScale）；标准材质由 three 的 normalMatrix 自动处理。
+// cfg.radius 仍是平均半径：聚焦取景、缩放下限、信息卡口径全部不变。
+function applyShape(mesh, cfg) {
+  if (!cfg.shape) return;
+  const s = cfg.shape.polarKm / cfg.shape.equatorialKm;
+  mesh.scale.y = s;
+  const u = mesh.material.uniforms;
+  if (u && u.uNScale) u.uNScale.value.set(1, 1 / (s * s), 1);
 }
 
 /* ============================================================
@@ -373,12 +392,20 @@ export function createSpace(scene, renderer) {
   const clickable = [];
   clickable.push(sunMesh, sunDot);
 
+  // 位图各向异性过滤上限（斜视行星表面时贴图保持清晰）
+  const maxAniso = renderer.capabilities.getMaxAnisotropy();
+
   for (const cfg of PLANETS) {
     const group = new THREE.Group();
 
-    const geo = new THREE.SphereGeometry(cfg.radius, 56, 40);
+    // 扁球体几何用赤道半径，再由 scale.y 压到极半径；
+    // 平均半径 cfg.radius 只服务于取景/缩放/信息卡，不参与几何
+    const geoR = cfg.shape ? kmToUnit(cfg.shape.equatorialKm) : cfg.radius;
+    const geo = new THREE.SphereGeometry(geoR, 56, 40);
     const mat = makePlanetMaterial(cfg);
     const mesh = new THREE.Mesh(geo, mat);
+    applyShape(mesh, cfg);
+    if (cfg.mapUrl) attachBodyMap(mat, cfg.mapUrl, { anisotropy: maxAniso });
     mesh.userData = cfg;
     group.add(mesh);
 
@@ -392,7 +419,7 @@ export function createSpace(scene, renderer) {
     // 卫星：目前只有地球的月球；位置/姿态由 body-system 每帧更新
     const satellites = [];
     for (const satCfg of cfg.satellites || []) {
-      const satMesh = buildSatellite(satCfg);
+      const satMesh = buildSatellite(satCfg, maxAniso);
       group.add(satMesh);
 
       const satDot = makeMinDot(satCfg);

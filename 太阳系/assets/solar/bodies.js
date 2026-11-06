@@ -10,6 +10,9 @@
    - 半径/卫星数：NSSDCA Planetary Fact Sheets（卫星数为 2026-11 JPL 快照）
    - 自转：IAU WGCCRE 2015 / NAIF pck00011.tpc
      （太阳 BODY10，行星 BODY199..BODY899，月球 BODY301 为 2009 IAU 值）
+   - 形状：NAIF pck00011.tpc 三轴 RADII（赤道/极半径）。
+     radiusKm 保持事实表平均半径（测试/信息卡口径不变）；扁球体带 shape，
+     几何用赤道半径 + scale.y 压扁；太阳/金星/月球在 pck 中为球体，无 shape。
    ============================================================ */
 import { kmToUnit, AU_TO_UNIT, KM_PER_AU } from "./config.js";
 
@@ -70,6 +73,8 @@ const SUN = defineBody({
 const MERCURY = defineBody({
   name: "水星", type: "类地行星",
   radiusKm: 2439.7,
+  // pck00011 BODY199：赤道 2440.53 / 极 2438.26（近球体）
+  shape: { equatorialKm: 2440.53, polarKm: 2438.26 },
 
   aAU: 0.38709927, e: 0.20563593,
   incDeg: 7.00497902, nodeDeg: 48.33076593,
@@ -171,6 +176,9 @@ const MOON = defineBody({
 const EARTH = defineBody({
   name: "地球", type: "类地行星",
   radiusKm: 6371.0,
+  // pck00011 BODY399：赤道 6378.1366 / 极 6356.7519。
+  // 一光秒 299792.458 km ÷ 赤道周长 2π·6378.1366 ≈ 7.4808 → 7.48
+  shape: { equatorialKm: 6378.1366, polarKm: 6356.7519 },
 
   aAU: 1.00000261, e: 0.01671123,
   incDeg: -0.00001531, nodeDeg: 0.0,
@@ -202,6 +210,8 @@ const EARTH = defineBody({
 const MARS = defineBody({
   name: "火星", type: "类地行星",
   radiusKm: 3389.5,
+  // pck00011 BODY499：赤道 3396.19 / 极 3376.20
+  shape: { equatorialKm: 3396.19, polarKm: 3376.20 },
 
   aAU: 1.52371034, e: 0.09339410,
   incDeg: 1.84969142, nodeDeg: 49.55953891,
@@ -229,6 +239,8 @@ const MARS = defineBody({
 const JUPITER = defineBody({
   name: "木星", type: "气态巨行星",
   radiusKm: 69911,
+  // pck00011 BODY599：赤道 71492 / 极 66854（扁率 ~6.5%，肉眼可见的扁球）
+  shape: { equatorialKm: 71492, polarKm: 66854 },
 
   aAU: 5.20288700, e: 0.04838624,
   incDeg: 1.30439695, nodeDeg: 100.47390909,
@@ -259,6 +271,8 @@ const JUPITER = defineBody({
 const SATURN = defineBody({
   name: "土星", type: "气态巨行星",
   radiusKm: 58232,
+  // pck00011 BODY699：赤道 60268 / 极 54364（扁率 ~9.8%，太阳系最扁行星）
+  shape: { equatorialKm: 60268, polarKm: 54364 },
 
   aAU: 9.53667594, e: 0.05386179,
   incDeg: 2.48599187, nodeDeg: 113.66242448,
@@ -312,6 +326,8 @@ export function ringGap(t, ring) {
 const URANUS = defineBody({
   name: "天王星", type: "冰巨星",
   radiusKm: 25362,
+  // pck00011 BODY799：赤道 25559 / 极 24973
+  shape: { equatorialKm: 25559, polarKm: 24973 },
 
   aAU: 19.18916464, e: 0.04725744,
   incDeg: 0.77263783, nodeDeg: 74.01692503,
@@ -340,6 +356,8 @@ const URANUS = defineBody({
 const NEPTUNE = defineBody({
   name: "海王星", type: "冰巨星",
   radiusKm: 24622,
+  // pck00011 BODY899：赤道 24764 / 极 24341
+  shape: { equatorialKm: 24764, polarKm: 24341 },
 
   aAU: 30.06992276, e: 0.00859048,
   incDeg: 1.77004347, nodeDeg: 131.78422574,
