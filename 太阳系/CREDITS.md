@@ -30,5 +30,10 @@ Saturn ring tau(r): Voyager 1 RSS X-band occultation (1980-11-13), PDS VG_2803
 - 平均半径 / 卫星数：NSSDCA Planetary Fact Sheets（卫星数为 2026-11 JPL 快照）
 - 自转 / 极轴：IAU WGCCRE 2015 / NAIF pck00011.tpc
 - 形状（赤道/极半径）：NAIF pck00011.tpc 三轴 RADII
+- 太阳临边昏暗：Neckel & Labs 1994, Solar Physics 153, 91（可见光 550 nm 多项式 I(μ)/I(1)=0.30+0.93μ−0.23μ²）
+- 太阳较差自转：Snodgrass & Ulrich 1990, ApJ 351, 309（光球恒星自转 ω(φ)=14.713−2.396sin²φ−1.787sin⁴φ °/天）
+- 米粒组织尺度：米粒 ~1000 km、超米粒 ~30000 km（OpenStax Astronomy 15.1 / Las Cumbres Observatory）
+
+太阳表面物理常数集中在 `assets/solar/solar-physics.js`，由 `tests/solar-physics.test.mjs` 锁定。
 
 以上均为美国政府机构 / 国际科学组织公开数据成果，无版权限制。

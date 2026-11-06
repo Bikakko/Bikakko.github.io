@@ -38,7 +38,9 @@ const defineBody = (data) => ({
 /* ============================================================
    太阳
    半径 695,700 km；IAU 极轴 286.13°/63.87°，W0 84.176°，
-   Ẇ 14.18440°/天（25.38 天，Carrington 平均，未建模纬度差异）
+   Ẇ 14.18440°/天（25.38 天，Carrington 平均）；纬度差异由 solar-physics.js
+   的 Snodgrass & Ulrich 较差自转在太阳 shader 叠加差速漂移建模。
+   临边昏暗（Neckel & Labs 1994）与米粒组织 km 尺度 likewise 见该模块。
    相对黄道法线 7.252°
    ============================================================ */
 const SUN = defineBody({
@@ -365,7 +367,9 @@ const URANUS = defineBody({
   obliquityDeg: 97.770,
 
   moons: 29, moonsAsOf: "2026-11",
-  colorA: 0x8fd8e0, colorB: 0x5aa6b4, colorC: 0xc8f0f4,
+  // 真实天王星是几乎无特征的淡青蓝（甲烷大气），对比极弱。程序化 ×2.05 增益
+  // 下 hex 按增益反推、压低到不裁剪（盘心显示约 159/199/205 淡青）
+  colorA: 0x96a6a8, colorB: 0x84979b, colorC: 0xa1b1b3,
   noiseFreq: 3.2, bandAmp: 0.25,
 });
 
@@ -395,7 +399,9 @@ const NEPTUNE = defineBody({
   obliquityDeg: 27.848,
 
   moons: 16, moonsAsOf: "2026-11",
-  colorA: 0x3d5fc4, colorB: 0x24397e, colorC: 0x8fa8f0,
+  // 真实海王星是较深的湛蓝，带 subtle 云带与白色云 streak。程序化 ×2.05 增益
+  // 下 hex 按增益反推避免裁剪（colorA 盘心约 72/113/205 湛蓝，colorC 白云不超 245）
+  colorA: 0x6880a8, colorB: 0x4f648f, colorC: 0x93a0b6,
   noiseFreq: 3.4, bandAmp: 0.2,
 });
 

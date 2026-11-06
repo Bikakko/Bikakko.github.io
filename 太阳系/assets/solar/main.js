@@ -122,6 +122,8 @@ function animate() {
 
   // 3) 距离驱动的视觉层
   sunUniforms.uTime.value = t;
+  // 较差自转按模拟时间（天）推进，与刚体自转同一时间基准
+  sunUniforms.uSimTime.value = simTime;
   // 亮度随距离：0 = 远观，1 = 贴近（约 80 倍日面半径以内开始增强）
   sunUniforms.uProx.value = Math.min(1, Math.max(0, 1 - camera.position.length() / (SUN_CFG.radius * 80)));
 

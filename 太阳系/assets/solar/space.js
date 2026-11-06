@@ -18,6 +18,10 @@ import { orbitalPointAtE, barycenterCorrectedPosition } from "./orbit-math.js";
 import { makePose } from "./pose.js";
 import { attachBodyMap } from "./textures.js";
 import { RING_PROFILE } from "./ring-profile.js";
+import {
+  LIMB_DARKENING, granuleFreq, supergranuleFreq,
+  DIFF_ROTATION, CARRINGTON_DEG_PER_DAY,
+} from "./solar-physics.js";
 
 /* ============================================================
    1. 星空背景
@@ -122,43 +126,61 @@ function buildSun(sunUniforms, sunGroup) {
     fragmentShader: /* glsl */ `
       uniform float uTime;
       uniform float uProx;   // 0 = 远观, 1 = 贴近（由主循环按相机距离写入）
+      uniform float uSimTime; // 模拟时间（天），驱动较差自转
       varying vec3 vN;
       varying vec3 vPos;
       ${LOGDEPTH_PARS_FRAG}
       ${NOISE_GLSL}
+
+      // 绕局部 +Y（自转极轴）旋转单位向量
+      vec3 rotY(vec3 p, float a) {
+        float c = cos(a), s = sin(a);
+        return vec3(c * p.x + s * p.z, p.y, -s * p.x + c * p.z);
+      }
+
       void main() {
-        // 表面颗粒 + 缓慢流动
-        float n = fbm3(vPos * 2.6 + vec3(0.0, uTime * 0.12, 0.0), 5);
-        float n2 = fbm3(vPos * 6.5 - vec3(uTime * 0.2, 0.0, 0.0), 4);
+        vec3 sp = normalize(vPos);                  // 单位球面采样方向
+        float lat = asin(clamp(sp.y, -1.0, 1.0));   // 日面纬度（弧度）
+        float s2 = sin(lat); s2 = s2 * s2;          // sin²φ
+        // Snodgrass & Ulrich 1990 恒星较差自转 ω(φ)=A+B·sin²φ+C·sin⁴φ（度/天）
+        float omega = ${DIFF_ROTATION.A} + ${DIFF_ROTATION.B} * s2 + ${DIFF_ROTATION.C} * s2 * s2;
+        // 刚体 frame 以 Carrington 平均率自转；叠加 (ω_mean−ω(φ))·t 漂移，
+        // 使表面特征合成出真实纬度依赖自转（赤道 14.713、极区 10.530°/天）
+        float drift = (${CARRINGTON_DEG_PER_DAY} - omega) * uSimTime * 0.0174532925;
+        vec3 sp2 = rotY(sp, drift);
 
-        float heat = n * 0.62 + n2 * 0.38;
+        // 超米粒组织 ~30000 km（频率 = R☉/尺度），缓慢对流流动
+        float superg = fbm3(sp2 * ${supergranuleFreq().toFixed(3)} + vec3(0.0, uTime * 0.01, 0.0), 4);
+        float heat = superg;
 
-        // 高频纹理只在贴近时计算
+        // 米粒组织 ~1000 km：仅贴近时计算（远观太阳是个点，无需高频细节）
         if (uProx > 0.0) {
-          float fine = fbm3(vPos * 26.0 + vec3(uTime * 0.05, 0.0, 0.0), 4);
-          float ultra = fbm3(vPos * 96.0 + vec3(0.0, uTime * 0.08, 0.0), 3);
-          heat += (fine - 0.5) * 0.55 * uProx;
-          heat += (ultra - 0.5) * 0.30 * uProx;
+          float gran = fbm3(sp2 * ${granuleFreq().toFixed(3)} + vec3(uTime * 0.02, 0.0, 0.0), 4);
+          float fine = fbm3(sp2 * ${(granuleFreq() * 2.5).toFixed(3)} - vec3(0.0, uTime * 0.03, 0.0), 3);
+          heat = mix(heat, gran, 0.55 * uProx);
+          heat += (fine - 0.5) * 0.25 * uProx;
         }
 
-        // 贴近时提高表面纹理对比：近看要有细节，不能是一块均匀的亮黄
-        float contrast = 1.0 + 1.1 * uProx;
+        // 贴近时提高表面纹理对比：近看要有米粒细节，不能是一块均匀的亮黄
+        float contrast = 1.0 + 0.8 * uProx;
         heat = clamp((heat - 0.5) * contrast + 0.5, 0.0, 1.0);
 
         vec3 cool = vec3(1.0, 0.38, 0.06);
         vec3 warm = vec3(1.0, 0.72, 0.28);
         vec3 hot  = vec3(1.0, 0.97, 0.86);
-
         vec3 col = mix(cool, warm, smoothstep(0.25, 0.62, heat));
         col = mix(col, hot, smoothstep(0.62, 0.92, heat));
 
-        // 边缘略暗，做出球体感；贴近时减弱，让整面都炽热
-        float rim = pow(1.0 - abs(dot(vN, vec3(0.0, 0.0, 1.0))), 2.0);
-        col *= 1.0 - rim * (0.35 - 0.22 * uProx);
+        // 软过曝 tone-map 保住层次而不是死白；越近越亮
+        vec3 outc = vec3(1.0) - exp(-col * (2.4 + 0.9 * uProx) * 1.4);
 
-        // 基础亮度整体提亮；越近越亮，1-exp 软过曝保住层次而不是死白
-        vec3 outc = col * (2.4 + 0.9 * uProx) * 1.4;
-        outc = vec3(1.0) - exp(-outc);
+        // 临边昏暗：Neckel & Labs 1994 可见光 I(μ)/I(1)=a0+a1·μ+a2·μ²，
+        // 边缘 μ=0 处约为中心 30%。μ 为视线与法线夹角余弦，是内禀属性，
+        // 不随相机距离改变。tone-map 后乘 limb 以忠实保留真实强度比。
+        float mu = clamp(dot(normalize(vN), vec3(0.0, 0.0, 1.0)), 0.0, 1.0);
+        float limb = ${LIMB_DARKENING.a0} + ${LIMB_DARKENING.a1} * mu + ${LIMB_DARKENING.a2} * mu * mu;
+        outc *= limb;
+
         gl_FragColor = vec4(outc, 1.0);
         ${LOGDEPTH_FRAG}
       }
@@ -353,7 +375,7 @@ export function createSpace(scene, renderer) {
   const stars = buildStars(renderer);
   scene.add(stars.points);
 
-  const sunUniforms = { uTime: { value: 0 }, uProx: { value: 0 } };
+  const sunUniforms = { uTime: { value: 0 }, uProx: { value: 0 }, uSimTime: { value: 0 } };
   const sunGroup = new THREE.Group();
   const sunMesh = buildSun(sunUniforms, sunGroup);
   // 太阳与行星同构：参与点选、聚焦与信息卡
