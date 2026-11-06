@@ -172,10 +172,11 @@ export function makePlanetMaterial(cfg) {
         // 柔化明暗交界
         float lightAmt = pow(ndl, 0.62);
 
-        // 位图已是 display-referred sRGB（采样值即最终显示值），不再套用程序化材质
-        // 的线性空间高增益，否则亮区过曝裁剪；程序化底色经 THREE.Color 转入线性
-        // 工作空间，需要更高增益补偿。按 uHasMap 分支取增益与环境光。
-        float lightGain = uHasMap > 0.5 ? 1.15 : 1.75;
+        // 位图已是 display-referred sRGB（采样值即最终显示值），源图本身含接近
+        // 255 的亮区，盘心总增益须 ≈1.0 才能原样复现、避免亮区裁剪；故取
+        // lightGain+ambientAmt=1.0。程序化底色经 THREE.Color 转入线性工作空间，
+        // 需要更高增益补偿。按 uHasMap 分支取增益与环境光。
+        float lightGain = uHasMap > 0.5 ? 0.92 : 1.75;
         float ambientAmt = uHasMap > 0.5 ? 0.08 : 0.30;
 
         // 背光面留一点自发光，避免死黑

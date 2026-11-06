@@ -11,8 +11,8 @@
 | moon_2k.jpg | NASA/GSFC Scientific Visualization Studio「CGI Moon Kit」(svs.gsfc.nasa.gov/4720)，LROC/LOLA 彩色全球底图 lroc_color_poles_4k.tif，4096×2048 → 2048×1024（原件经 Wayback 存档取得） | NASA/GSFC/Scientific Visualization Studio | 公有领域 (NASA) |
 | mars_2k.jpg | USGS Astrogeology「Mars_Viking_MDIM21_ClrMosaic_global」，Viking 轨道器红/绿滤光片真彩色全球镶嵌图（1 km/px，由 232 m 原图降采样）；经 Wikimedia Commons 1920px 缩略图取得后重采样至 2048×1024，未做人工调色 | NASA / JPL / USGS Astrogeology Science Center | 公有领域 (PD-USGov) |
 | mercury_2k.jpg | USGS Astrogeology「MESSENGER MDIS Global Color Mosaic 665m v3」（1000/750/430 nm 自然色合成），官方 1024px browse 档 2× 放大至 2048×1024 | USGS Astrogeology / MESSENGER Team / Arizona State University | 公有领域 (USGS) |
-
-木星与土星贴图的致谢随阶段3补充。
+| jupiter_2k.jpg | NASA/JPL/Space Science Institute「Cassini's Best Maps of Jupiter (Cylindrical Map)」PIA07782，Cassini ISS 窄角相机 2000-12 飞掠 750/451 nm 合成真彩色（色彩接近肉眼所见），3601×1801 降采样至 2048×1024 | NASA / JPL / Space Science Institute | 公有领域 (PD-USGov) |
+| saturn_2k.jpg | Solar System Scope「2k_saturn」土星表面图（基于 NASA 影像数据），2048×1024。NASA 无土星本体全球等距柱状真彩色产品，故采用此合规源 | Solar System Scope (https://www.solarsystemscope.com/textures/) | CC-BY 4.0 |
 
 ## 土星环光学深度剖面（assets/data/saturn_ring_tau.csv）
 

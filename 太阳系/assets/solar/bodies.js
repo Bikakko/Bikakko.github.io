@@ -268,6 +268,9 @@ const JUPITER = defineBody({
   obliquityDeg: 3.120,
 
   moons: 115, moonsAsOf: "2026-11",
+  // Cassini ISS PIA07782 真彩色圆柱全球图（PD-USGov NASA/JPL/SSI）；
+  // 加载后 shader 以真实云带替代程序化带纹，下列底色仅作未加载兜底
+  mapUrl: "assets/textures/jupiter_2k.jpg",
   colorA: 0xd8b98c, colorB: 0x8a6844, colorC: 0xf0e2c8,
   noiseFreq: 2.6, bandAmp: 1.0,
 });
@@ -301,6 +304,10 @@ const SATURN = defineBody({
   obliquityDeg: 26.730,
 
   moons: 293, moonsAsOf: "2026-11",
+  // Solar System Scope 土星表面图（CC-BY 4.0，基于 NASA 数据，见 CREDITS.md）；
+  // NASA 无土星本体全球等距柱状真彩色产品，故采用此合规源。
+  // 加载后 shader 以真实云带替代程序化带纹，下列底色仅作未加载兜底
+  mapUrl: "assets/textures/saturn_2k.jpg",
   colorA: 0xe3cf9e, colorB: 0xb59a68, colorC: 0xfaf0d2,
   noiseFreq: 2.8, bandAmp: 0.85,
 
