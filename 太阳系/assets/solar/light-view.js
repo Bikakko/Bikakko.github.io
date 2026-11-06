@@ -6,13 +6,18 @@
      dR/dt 恒等于 c。按相机像素尺度做 2 的幂 LOD 抽样（stride 与 t 无关），
      球壳铺满 0..主波前全程、间距均匀、数量恒定；窗口两端淡入淡出隐藏
      增删。全部是真实 3D 半透明球面，普通混合 + fresnel 不累积亮度。
+   - 视角切换：相机在光球外时，所有球壳正常显示（看到完整光球）；相机
+     被光球包裹时，球面退成极淡底衬，改画每个波面与「面向相机的观察
+     平面」的交圆（同心正圆），亮度按 sweepWeight 调制 → 随时间一圈圈
+     从中心向外扩张、「一波一波的光波扫过去」。主波前球带经纬网始终
+     保留作方位参考。
    - 每条太阳→行星光线按主波前裁断，并每隔 1 光秒显示一个亮点，
      亮点随波前以光速向外流动。
    ============================================================ */
 import * as THREE from "three";
 import { SUN_CFG, PLANETS } from "./bodies.js";
 import { orbitalPosition } from "./orbit-math.js";
-import { pulseRadii, frontRadius } from "./light-math.js";
+import { pulseRadii, pulseStride, sweepWeight, frontRadius } from "./light-math.js";
 import {
   qPulseLightSec, MAX_PULSES, UNITS_PER_LIGHT_SEC,
 } from "./config.js";
@@ -69,12 +74,17 @@ export function createLightView(scene, camera) {
 
   /* ---------- 半透明球面模板 ----------
      NormalBlending：N 层叠加后趋向球面色，不会像加性混合那样越叠越亮。
-     每层 clone 一份材质（共享同一 shader program），用 uLayerFade 淡入淡出。 */
+     每层 clone 一份材质（共享同一 shader program），用 uLayerFade 淡入淡出。
+     uInside 切换两种观感：球外画完整光球，球内只让掠过相机的波面发亮。 */
   const sphereMatTemplate = new THREE.ShaderMaterial({
     uniforms: {
-      uColor:     { value: new THREE.Color(0xffc078) },
-      uOpacity:   { value: 0.055 },
-      uLayerFade: { value: 1 },
+      uColor:       { value: new THREE.Color(0xffc078) },
+      uOpacity:     { value: 0.055 },
+      uLayerFade:   { value: 1 },
+      uShellRadius: { value: 0 },
+      uCamRadius:   { value: 0 },
+      uSweepWidth:  { value: 1 },
+      uInside:      { value: 0 },
     },
     transparent: true, depthWrite: false, depthTest: true,
     side: THREE.DoubleSide, blending: THREE.NormalBlending,
@@ -94,14 +104,28 @@ export function createLightView(scene, camera) {
       uniform vec3 uColor;
       uniform float uOpacity;
       uniform float uLayerFade;
+      uniform float uShellRadius;
+      uniform float uCamRadius;
+      uniform float uSweepWidth;
+      uniform float uInside;
       varying vec3 vN;
       varying vec3 vView;
       ${LOGDEPTH_PARS_FRAG}
       void main() {
-        float fres = pow(1.0 - abs(dot(normalize(vN), normalize(vView))), 2.0);
-        // 球心方向 fres≈0 且基数压到 0.04：N 层同心球壳在中心也不会
-        // 累积成亮团（用户明确要求「不要越靠近中心越亮」）。
-        float a = uOpacity * uLayerFade * (0.04 + 0.96 * fres);
+        float ndv = abs(dot(normalize(vN), normalize(vView)));
+        float fres = pow(1.0 - ndv, 2.0);
+        // 球外：完整光球，轮廓亮、球心方向基数压到 0.04 防止中心叠亮。
+        float outside = uOpacity * (0.04 + 0.96 * fres);
+        // 球内：球面内表面会铺满整个视野，必须收成「细环」才有波的形状。
+        // 高次 fresnel 只留掠射的一圈，基数压到 0.02 → 不会糊成整屏橙雾。
+        float ring = pow(1.0 - ndv, 8.0);
+        // 与 light-math.sweepWeight() 同式：波面迎面涌来拖尾长、
+        // 越过相机后快速淡出 → 一环环从中心向外扩张、扫过视野。
+        float d = (uShellRadius - uCamRadius) / max(uSweepWidth, 1e-6);
+        float sweep = exp(-d * d * (d <= 0.0 ? 0.45 : 1.8));
+        // 球内球面只留极淡底衬，波的形状交给面向相机的同心波环（见 update）。
+        float insideA = 0.07 * sweep * (0.02 + 0.98 * ring);
+        float a = uLayerFade * mix(outside, insideA, uInside);
         gl_FragColor = vec4(uColor, a);
         ${LOGDEPTH_FRAG}
       }
@@ -118,6 +142,8 @@ export function createLightView(scene, camera) {
 
   /* ---------- 主波前球（带唯一一套经纬网） ---------- */
   const mainSphereMat = sphereMatTemplate.clone();
+  // 主波前球始终按「球外」绘制，作方位参考，不参与球内扫掠淡出。
+  mainSphereMat.uniforms.uInside.value = 0;
   const mainParts = [];
   const mainSphere = new THREE.Mesh(sphereGeo, mainSphereMat);
   mainSphere.renderOrder = 2;
@@ -134,7 +160,11 @@ export function createLightView(scene, camera) {
     group.add(o);
   }
 
-  /* ---------- 波纹球槽位（LOD 抽样后的可见球壳，物理上每 5 光秒一个） ---------- */
+  /* ---------- 波纹球槽位（LOD 抽样后的可见球壳，物理上每 5 光秒一个） ----------
+     球外看球面（完整光球）；球内改为看每个波面与「面向相机的观察平面」
+     的交圆 —— 一圈圈同心正圆，随时间从中心向外扩张、一道道掠过视野。
+     用面向相机的圆而非黄道大圆：后者在透视下远半会压缩成密密麻麻的
+     平行弧线。线用普通混合，不会像半透明球面那样叠成一片。 */
   const ripples = [];
   for (let i = 0; i < MAX_PULSES; i++) {
     const mat = sphereMatTemplate.clone();
@@ -143,7 +173,17 @@ export function createLightView(scene, camera) {
     mesh.frustumCulled = false;
     mesh.visible = false;
     group.add(mesh);
-    ripples.push({ mesh, mat });
+
+    const arcMat = lineMat.clone();
+    arcMat.opacity = 0;
+    const arc = new THREE.LineLoop(circleGeo, arcMat);
+    // 朝向每帧跟随相机（见 update）：圆平面垂直于视线 → 同心正圆
+    arc.renderOrder = 3;
+    arc.frustumCulled = false;
+    arc.visible = false;
+    group.add(arc);
+
+    ripples.push({ mesh, mat, arc, arcMat });
   }
 
   /* ---------- 八条光线（世界空间线段 + 每 1 光秒一个亮点） ---------- */
@@ -212,18 +252,37 @@ export function createLightView(scene, camera) {
     // 可见半径窗口只由相机决定（不含 t）→ stride 在播放中恒定，
     // 球壳索引集合不会重排，每层严格以 c 平滑推进。
     const camDist = Math.max(_camPos.length(), SUN_CFG.radius * 2);
-    // 屏幕上可见的横向半径尺度：全景下覆盖整个光球，拉近时窗口收窄，
-    // stride 随之降到 1，就能看到逐 5 光秒的细波纹。只依赖相机，不含 t。
+    // 相机是否已被主波前包裹：球外显示完整光球，球内显示一波波掠过的光波。
+    const inside = _camPos.lengthSq() < mainR * mainR ? 1 : 0;
+    cameraInside = inside === 1;
+
+    const halfView = camDist * Math.tan(camera.fov * Math.PI / 360);
+    // 球外：窗口按屏幕横向可见尺度，全景覆盖整个光球、拉近能看逐 5 光秒
+    // 细波纹。球内：窗口必须扩到相机所在半径之外，否则「正掠过相机的
+    // 波面」会被裁掉，球内就只剩空白。只依赖相机，不含 t。
     const viewRadius = Math.max(
-      camDist * Math.tan(camera.fov * Math.PI / 360),
+      halfView,
+      inside ? camDist * 1.6 : 0,
       SUN_CFG.radius * 8,
     );
     const radii = pulseRadii(lightSec, qPulseLightSec, viewRadius);
+
+    // 球内：波环是「波前球 ∩ 面向相机的观察平面」的交圆，只有半径
+    // R < camDist·tan(fov/2) 的波环落在视野内。把扫掠焦点放在这个范围
+    // 的中段，波环就会从中心一圈圈长大、掠过视野后淡出（一波波扫过）。
+    const stride = pulseStride(viewRadius, qPulseLightSec);
+    const gap = stride * qPulseLightSec * UNITS_PER_LIGHT_SEC;
+    const focusRadius = inside ? camDist * 0.35 : camDist;
+    const sweepWidth = inside
+      ? Math.max(camDist * 0.15, gap * 2)
+      : Math.max(gap * 2, SUN_CFG.radius * 4);
+
     const n = radii.length;
     for (let i = 0; i < ripples.length; i++) {
       const r = ripples[i];
       const active = i < n;
       r.mesh.visible = active;
+      r.arc.visible = active && inside === 1;
       if (!active) continue;
       r.mesh.scale.setScalar(radii[i]);
       // 两端各淡出两层：窗口边界的球壳增删发生在不可见处，
@@ -231,10 +290,22 @@ export function createLightView(scene, camera) {
       const fade = n <= 3 ? 1
         : Math.min(1, Math.max(0, i / 2))
           * Math.min(1, Math.max(0, (n - 1 - i) / 2));
-      r.mat.uniforms.uLayerFade.value = fade;
+      const u = r.mat.uniforms;
+      u.uLayerFade.value = fade;
+      u.uShellRadius.value = radii[i];
+      u.uCamRadius.value = focusRadius;
+      u.uSweepWidth.value = sweepWidth;
+      u.uInside.value = inside;
+      if (inside === 1) {
+        // 同心波环：圆平面每帧垂直于视线，亮度按 w² 拉开 →
+        // 一两道亮波从中心向外扫过，其余淡出，不成平行线、不叠加。
+        const w = sweepWeight(radii[i], focusRadius, sweepWidth);
+        r.arc.visible = w > 0.08 && fade > 0;
+        r.arc.quaternion.copy(camera.quaternion);
+        r.arc.scale.setScalar(radii[i]);
+        r.arcMat.opacity = (0.04 + 0.95 * w * w) * fade;
+      }
     }
-
-    cameraInside = _camPos.lengthSq() < mainR * mainR;
 
     for (const r of rays) {
       orbitalPosition(r.cfg, simTime, _v);

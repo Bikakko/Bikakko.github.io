@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import {
   lightTimeSeconds, frontRadius, lightArrivals, lightSecondsPerAU,
   lightSecondsSince, emissionPlusSeconds, advancedSimDays,
-  pulseRadii, pulseStride,
+  pulseRadii, pulseStride, sweepWeight,
   toLogAxis, fromLogAxis,
   formatClock, formatShort, formatLightTime,
   LOG_AXIS_MIN, LOG_AXIS_MAX, LIGHT_TICKS,
@@ -198,4 +198,37 @@ test("非法参数、负光行时、t=0 不产生 NaN 或空画面", () => {
   assert.ok(pulseRadii(1200, 5, NaN).every(Number.isFinite));
   assert.ok(pulseRadii(1200, 5, -5).every(Number.isFinite));
   assert.equal(pulseStride(Infinity, 5, 32), 1);
+});
+
+test("球内扫掠：只有掠过相机的波面发亮，方向感正确且不叠加", () => {
+  const cam = 120, w = 25;
+  assert.ok(close(sweepWeight(cam, cam, w), 1, 1e-9), "波面在相机处最亮");
+  assert.ok(sweepWeight(cam - 4 * w, cam, w) < 0.05, "远处内侧球淡出");
+  assert.ok(sweepWeight(cam + 4 * w, cam, w) < 0.05, "已越过相机的球淡出");
+  // 方向感：同样距离，迎面涌来（内侧）比越过相机后更亮
+  assert.ok(sweepWeight(cam - w, cam, w) > sweepWeight(cam + w, cam, w));
+  // 同时可见层数受控：等间距球壳的权重和远小于总层数，不会叠成一片亮
+  const shells = [];
+  for (let r = 0; r <= 300; r += 12.9) shells.push(r);
+  const sum = shells.reduce((s, r) => s + sweepWeight(r, cam, w), 0);
+  assert.ok(sum < 4, `等效发亮层数 ${sum.toFixed(2)} 应远小于 ${shells.length}`);
+  assert.ok(sum > 1.5, "至少有一到两波清晰可见");
+  // 退化输入不产生 NaN，也不污染画面
+  assert.equal(sweepWeight(NaN, cam, w), 0);
+  assert.equal(sweepWeight(Infinity, cam, w), 0);
+  assert.ok(Number.isFinite(sweepWeight(cam, cam, 0)));
+  assert.ok(Number.isFinite(sweepWeight(cam, cam, NaN)));
+  assert.ok(close(sweepWeight(cam, cam, NaN), 1, 1e-9));
+});
+
+test("球内扫掠随时间推进：各球壳依次经过相机，形成一波波扫过", () => {
+  const cam = 120, w = 25, step = 12.9;
+  // 每层以 c 推进，权重依次 0→1→0；相邻时刻只有少量波在亮
+  for (const t of [0, 100, 200, 300]) {
+    const shells = [];
+    for (let k = 0; k < 24; k++) shells.push(k * step + t * 0.02016);
+    const lit = shells.filter((r) => sweepWeight(r, cam, w) > 0.3);
+    assert.ok(lit.length >= 1 && lit.length <= 5,
+      `t=${t} 同时可见 ${lit.length} 波，应是一小波而不是全部`);
+  }
 });

@@ -101,6 +101,19 @@ export function pulseRadii(lightSec, intervalSec = PULSE_FALLBACK_SEC,
   return radii;
 }
 
+/* ---------- 球内「光波扫过」权重 ----------
+   相机被光球包裹时，只有波面正掠过「观察视野半径」（camRadius，球内取
+   相机距离的一个比例）的那一两波应该发亮：更内侧与已越过视野的球都淡出。
+   于是随时间推进，各球壳依次经过 camRadius，视觉上就是一波一波的光波
+   扫过去，而不是一圈圈静止的同心球壳。权重不对称：波面迎面涌来
+   （shell < cam）时拖尾长、越过视野后快速淡出，给出「扫过去」的方向感。
+   纯函数，与 GLSL 中的公式保持一致，供单测锁定。 */
+export function sweepWeight(shellRadius, camRadius, width) {
+  const w = Math.max(Number.isFinite(width) ? width : 0, 1e-9);
+  const d = (shellRadius - camRadius) / w;
+  return Number.isFinite(d) ? Math.exp(-d * d * (d <= 0 ? 0.45 : 1.8)) : 0;
+}
+
 export function lightTimeSeconds(distanceWorld) {
   return distanceWorld / UNITS_PER_LIGHT_SEC;
 }
