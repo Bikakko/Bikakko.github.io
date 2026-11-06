@@ -3,6 +3,6 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test 太阳系/tests/*.test.mjs"
+    "test": "node --import ./太阳系/tests/register-three.mjs --test 太阳系/tests/*.test.mjs"
   }
 }

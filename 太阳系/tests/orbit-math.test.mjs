@@ -157,3 +157,14 @@ test("地月质心偏移始终约 4670 km（在近/远地点之间）", () => {
     assert.ok(offsetKm > 4300 && offsetKm < 5000, `t=${t} 偏移 ${offsetKm} km`);
   }
 });
+
+test("solveKepler 在夹取上限 e=0.9 仍收敛（极端 ?t= 历元）", () => {
+  // elementsAt 把 e 夹在 [0, 0.9]；上限附近近心点处方程病态，
+  // 必须保证牛顿迭代残差仍然达标
+  for (const M of [-7, -0.001, 0, 0.01, 0.5, Math.PI, 5.5, 100]) {
+    const E = solveKepler(M, 0.9);
+    const m = ((M % TAU) + TAU) % TAU;
+    assert.ok(Number.isFinite(E), `M=${M} 非有限`);
+    assert.ok(close(E - 0.9 * Math.sin(E), m, 1e-9), `M=${M} 残差过大`);
+  }
+});
