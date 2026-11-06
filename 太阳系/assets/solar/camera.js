@@ -3,16 +3,20 @@
    - 自实现，远景限制在黄道面上方（无 OrbitControls）
    - 触屏：touch-action + 手写 touch 事件
    - 滚轮：以光标为锚点平滑推拉（不聚焦、不猜目标）
+   职责拆分：拾取在 camera-pick.js，聚焦/过渡在 camera-focus.js；
+   本文件只管轨道状态、缩放手势与每帧相机推进。
    ============================================================ */
 import * as THREE from "three";
-import { PLANETS, MOON_CFG, SUN_CFG } from "./bodies.js";
+import { PLANETS } from "./bodies.js";
 import { qAz, qEl, qDist } from "./config.js";
 import {
   hasDragged, pinchZoomDistance, MIN_PHI, maxPhiForDistance, keyboardMoveMode,
 } from "./camera-math.js";
+import { createPicker } from "./camera-pick.js";
+import { createFocusControl, SURFACE_RATIO } from "./camera-focus.js";
 
 export function createCameraRig({ canvas, camera, space, hud }) {
-  const { planets, focusables, clickable, moonMesh, sunGroup } = space;
+  const { focusables, moonMesh, sunGroup } = space;
 
   // 「全景」默认视角；?az / ?el 可覆盖，方便截图（el 夹进合法极角范围）
   const HOME_THETA = qAz !== null ? qAz * Math.PI / 180 : Math.PI * 0.22;
@@ -101,8 +105,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     _panMove.addScaledVector(_panUp, dy * worldPerPx);
 
     // 只改偏移量，updateCamera 每帧会把它叠加进 target
-    zoomRefDist = 0;   // 平移接管，停掉缩放动画
-    zoomAnchorObj = null;
+    cancelZoom();   // 平移接管，停掉缩放动画
     viewTouched = true;
     orbit.panOffset.add(_panMove);
   }
@@ -114,10 +117,6 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   const _zoomTRef = new THREE.Vector3();
   const _zoomTDesired = new THREE.Vector3();
   const _zoomDelta = new THREE.Vector3();
-  const _zoomBody = new THREE.Vector3();
-  const _zoomProj = new THREE.Vector3();
-  const _zoomFwd = new THREE.Vector3();
-  const _zoomGen = new THREE.Vector3();
   // 进行中的推拉动画：滚轮只设定目标距离和锚点，不直接拍 dist/target。
   // updateCamera 每帧按已缓动的 dist 反推 target，动画全程锚点都钉在光标下，
   // 消除「上一格星球还是小点、下一格直接贴到表面」的跳变。
@@ -128,101 +127,18 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   let zoomAnchorRadius = 0;
   let zoomAnchorX = 0, zoomAnchorY = 0;
 
-  // 锚定天体的半径：推拉下限按它算（见 zoomTowardCursor）
-  function bodyRadiusOf(obj) {
-    if (obj === sunGroup) return SUN_CFG.radius;
-    if (obj === moonMesh) return MOON_CFG.radius;
-    const p = planets.find(x => x.group === obj);
-    return p ? p.cfg.radius : 0;
+  // 停掉缩放动画的统一入口：平移/聚焦/复位接管时都走这里，
+  // 不再在各手势入口手工同步这两个变量
+  function cancelZoom() {
+    zoomRefDist = 0;
+    zoomAnchorObj = null;
   }
 
-  // 光标指向的天体中心（只作推拉锚点，不改聚焦状态）；没有命中返回 null。
-  // 两层拾取：
-  //   严格窗 = max(投影盘面半径, 6px) + 2px，覆盖肉眼对准光点的正常偏差；
-  //   宽容窗 = 投影盘面半径 + 40px，仅行星与月球参与。
-  // 严格窗内「盘面大的优先，光标距离次之」：贴近某颗星球时它的圆盘盖满屏幕，
-  // 绝不能因为月球/太阳的投影恰好更靠近固定光标就换锚——换锚会让镜头
-  // 瞬间转向那颗更远的天体，把当前星球甩出画面。
-  // 宽容窗是关键：严格窗落空时若退回 target 等深平面锚点，平面在星球身前，
-  // 镜头收敛过去时会直接越过星球深度，把星球甩到相机身后（肉眼瞄准偏一点必现）。
-  // 太阳不参与宽容窗：它的光晕横跨几十像素，会把内行星簇的宽容拾取全部抢走，
-  // 锚到太阳等于锚到原点，照样从行星身旁掠过去。
-  function pickZoomAnchor(clientX, clientY, out, allowNear = true) {
-    camera.updateMatrixWorld();
-    camera.getWorldDirection(_zoomFwd);
-    const halfHtan = Math.tan(camera.fov * Math.PI / 360);
-    let strictRpx = -1, strictDpx = Infinity;
-    let strictObj = null;
-    let genDpx = Infinity;
-    let genObj = null;
-
-    const consider = (obj, radius, generous) => {
-      obj.getWorldPosition(_zoomBody);
-      _zoomProj.copy(_zoomBody);
-      _zoomBody.sub(camera.position);
-      if (_zoomFwd.dot(_zoomBody) <= 0) return;   // 在相机背后
-      const cd = _zoomBody.length();
-      const rPx = (radius / (cd * halfHtan)) * (innerHeight / 2);
-      _zoomProj.project(camera);
-      const sx = (_zoomProj.x * 0.5 + 0.5) * innerWidth;
-      const sy = (-_zoomProj.y * 0.5 + 0.5) * innerHeight;
-      const dpx = Math.hypot(sx - clientX, sy - clientY);
-      if (dpx <= Math.max(rPx, 6) + 2) {
-        // 半径差超过 0.5px 以盘面大小优先；相近时取离光标近的
-        if (rPx > strictRpx + 0.5
-            || (Math.abs(rPx - strictRpx) <= 0.5 && dpx < strictDpx)) {
-          strictRpx = rPx;
-          strictDpx = dpx;
-          strictObj = obj;
-          out.copy(_zoomBody).add(camera.position);
-        }
-      } else if (generous && dpx <= rPx + 40 && dpx < genDpx) {
-        genDpx = dpx;
-        genObj = obj;
-        _zoomGen.copy(_zoomBody).add(camera.position);
-      }
-    };
-
-    consider(sunGroup, SUN_CFG.radius, false);
-    for (const p of planets) consider(p.group, p.cfg.radius, true);
-    if (moonMesh) consider(moonMesh, MOON_CFG.radius, true);
-
-    if (!strictObj && genObj) {
-      strictObj = genObj;
-      out.copy(_zoomGen);
-    }
-    if (!strictObj && allowNear) {
-      // 第三档：光标没精确落在天体上，但附近（约 22% 屏内）有天体时取最近的。
-      // 否则瞄得稍偏就只能沿空白平面推进，拉近到 0.05 就停住。
-      // 拖动对齐时用不到这一档（allowNear=false）：空白点击不应该移动中心。
-      const nearObj = pickNearestBody(clientX, clientY, out);
-      if (nearObj) strictObj = nearObj;
-    }
-    return strictObj;
-  }
-
-  // 屏幕空间离光标最近的天体（考虑相机前方的），窗口约为短边的 22%。
-  // 太阳不参与：它常在光标附近，锚到太阳等于锚到原点，会把近距离视角整个拉走
-  const _nearProj = new THREE.Vector3();
-  const _nearOff = new THREE.Vector3();
-  function pickNearestBody(clientX, clientY, out) {
-    const limit = Math.min(innerWidth, innerHeight) * 0.22;
-    camera.getWorldDirection(_zoomFwd);
-    let best = null, bestD = limit;
-    const consider = (obj) => {
-      obj.getWorldPosition(_nearProj);
-      _nearOff.copy(_nearProj).sub(camera.position);
-      if (_zoomFwd.dot(_nearOff) <= 0) return;   // 在相机背后
-      _nearProj.project(camera);
-      const sx = (_nearProj.x * 0.5 + 0.5) * innerWidth;
-      const sy = (-_nearProj.y * 0.5 + 0.5) * innerHeight;
-      const d = Math.hypot(sx - clientX, sy - clientY);
-      if (d < bestD) { bestD = d; best = obj; out.copy(_nearOff).add(camera.position); }
-    };
-    for (const p of planets) consider(p.group);
-    if (moonMesh) consider(moonMesh);
-    return best;
-  }
+  const picker = createPicker({ camera, space });
+  const focus = createFocusControl({
+    orbit, camera, hud, cancelZoom,
+    markViewTouched: () => { viewTouched = true; },
+  });
 
   // 保持「锚点」在推拉前后落在同一屏幕位置：距离从 d0 变到 d1 时
   // target 平移 (1 - d1/d0)·(锚点 - target)。锚点是光标下的天体中心；
@@ -234,14 +150,14 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
     // 聚焦时忽略光标偏移；但向外滚过 60 倍半径后自动取消选中，
     // 本格起改按自由视角继续拉远——滚轮拉远就是「放手」的统一下拉手势
-    if (focusTarget) {
-      const df = Math.min(MAX_DIST, Math.max(minDistance(), newDist));
+    if (focus.getTarget()) {
+      const df = Math.min(MAX_DIST, Math.max(focus.minDistance(PANORAMA_MIN_DIST), newDist));
       if (!Number.isFinite(df)) return;
-      if (df <= focusReleaseDist()) {
+      if (df <= focus.releaseDistance()) {
         orbit.tDist = df;
         return;
       }
-      releaseFocus();
+      focus.release();
     }
 
     camera.updateMatrixWorld();
@@ -258,7 +174,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
       anchorObj = zoomAnchorObj;
     }
     if (!anchorObj) {
-      anchorObj = pickZoomAnchor(clientX, clientY, _zoomAnchor);
+      anchorObj = picker.pickZoomAnchor(clientX, clientY, _zoomAnchor);
       if (anchorObj) {
         zoomAnchorObj = anchorObj;
         zoomAnchorX = clientX;
@@ -272,7 +188,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
         zoomAnchorObj = null;
       }
     }
-    zoomAnchorRadius = anchorObj ? bodyRadiusOf(anchorObj) : 0;
+    zoomAnchorRadius = anchorObj ? picker.bodyRadiusOf(anchorObj) : 0;
 
     if (!anchorObj) {
       const ndcX = (clientX / innerWidth) * 2 - 1;
@@ -301,7 +217,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   let dragStartX = 0, dragStartY = 0;
 
   function takeOverCamera() {
-    focusFlight = null;
+    focus.cancelFlight();
     zoomRefDist = 0;
     orbit.tDist = orbit.dist;
     orbit.tTheta = orbit.theta;
@@ -363,8 +279,8 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
   function handleWheel(e) {
     e.preventDefault();
-    if (focusFlight) {
-      focusFlight = null;
+    if (focus.isFlying()) {
+      focus.cancelFlight();
       zoomRefDist = 0;
       orbit.tDist = orbit.dist;
     }
@@ -465,13 +381,13 @@ export function createCameraRig({ canvas, camera, space, hud }) {
       pinchStart = 0;
       if (wasTap) {
         const t = e.changedTouches[0];
-        const hit = pickPlanet(t.clientX, t.clientY);
+        const hit = picker.pickPlanet(t.clientX, t.clientY);
         if (hit) {
           const holder = focusables.find(f => f.cfg === hit.userData);
-          if (holder) focusOn(holder.cfg, holder.group);
+          if (holder) focus.focusOn(holder.cfg, holder.group);
           touchLastTapAt = 0;
         } else {
-          if (focusTarget) releaseFocus();
+          if (focus.getTarget()) focus.release();
           const now = performance.now();
           if (now - touchLastTapAt < 350) resetView();
           touchLastTapAt = now;
@@ -494,179 +410,12 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     pinchStart = 0;
   });
 
-  /* ---------- 点击聚焦 ---------- */
-  const raycaster = new THREE.Raycaster();
-  const ndc = new THREE.Vector2();
-  let focusTarget = null;
-  // 聚焦的 0.5 秒过渡：{ t0, dur, fromDist, toDist, fromTarget }
-  // 期间距离与 target 按同一条时间线推进，方位（theta/phi）保持不变
-  let focusFlight = null;
-
-  // 缩放下限：推拉与聚焦共用同一个贴面比例
-  const SURFACE_RATIO = 1.05;
-
-  function minDistance() {
-    return focusTarget
-      ? Math.max(focusTarget.cfg.radius * SURFACE_RATIO, 1e-5)
-      : PANORAMA_MIN_DIST;
-  }
-
-  // 聚焦状态下滚轮拉到这么远就自动取消选中（约 60 倍星球半径，星球又变回一个点）
-  function focusReleaseDist() {
-    return focusTarget ? Math.max(focusTarget.cfg.radius * 60, 1e-4) : 0;
-  }
-
-  // 取消选中：只释放锁定，保持当前视角位置。
-  // 把当前 target 转成平移偏移，自由视角的基准点不会跳回原点。
-  function releaseFocus() {
-    if (!focusTarget) return;
-    orbit.panOffset.copy(orbit.target);
-    focusTarget = null;
-    focusFlight = null;          // 中断聚焦过渡（若有）
-    orbit.tDist = orbit.dist;    // 停在当前距离，不继续向星球推进
-    zoomRefDist = 0;   // 停掉可能还在滑行的推拉补偿，避免与新的平移基准冲突
-    zoomAnchorObj = null;
-    hud.hideInfo();
-  }
-
-  const _pickV = new THREE.Vector3();
-  // 拾取分两路：球体走射线（真实遮挡）；光点按屏幕空间 10px 命中
-  //（世界单位阈值在远近混合场景下不可靠：聚焦贴脸时其它光点会变得点不中）
-  const pickMeshes = clickable.filter(o => o.isMesh);
-  const pickDots = clickable.filter(o => o.isPoints);
-  function pickPlanet(clientX, clientY) {
-    ndc.x = (clientX / innerWidth) * 2 - 1;
-    ndc.y = -(clientY / innerHeight) * 2 + 1;
-    raycaster.setFromCamera(ndc, camera);
-    raycaster.params.Points.threshold = 0;   // 光点不走射线
-    const hits = raycaster.intersectObjects(pickMeshes, false);
-    let bestD = hits.length ? hits[0].distance : Infinity;
-    let bestObj = hits.length ? hits[0].object : null;
-
-    camera.getWorldDirection(_zoomFwd);
-    for (const dot of pickDots) {
-      dot.getWorldPosition(_pickV);
-      _zoomBody.copy(_pickV).sub(camera.position);
-      const cd = _zoomBody.length();
-      if (cd >= bestD || _zoomFwd.dot(_zoomBody) <= 0) continue;   // 更远或背后
-      _zoomProj.copy(_pickV).project(camera);
-      const sx = (_zoomProj.x * 0.5 + 0.5) * innerWidth;
-      const sy = (-_zoomProj.y * 0.5 + 0.5) * innerHeight;
-      if (Math.hypot(sx - clientX, sy - clientY) <= 10) {
-        bestD = cd;
-        bestObj = dot;
-      }
-    }
-    return bestObj;
-  }
-
-  // 距离供点击聚焦使用；向阳方位仅供 ?focus= 瞬移使用。
-  // 点击聚焦保留用户当前角度，避免把夜面取景规则误套到交互上。
-  function focusFraming(cfg, wp) {
-    // 相机放在「行星 → 太阳」连线的延长线上，且偏向一侧 40°，
-    // 这样既看到亮面，又不至于正对着阳光全是白板。
-    // 仰角约 14.9°（0.26 rad）。
-    // 不能 normalize 后硬塞 camDir.y——水平分量会被压没，
-    // 相机就跑到行星正上方垂直俯视，只能看到一个点。
-    const sunDir = wp.clone().negate();
-    let az;
-    if (sunDir.lengthSq() < 1e-12) {
-      // 太阳自身在原点，「行星→太阳」方向退化：用固定斜向取景
-      az = new THREE.Vector3(0.55, 0, 0.83).normalize();
-    } else {
-      const flat = new THREE.Vector3(sunDir.x, 0, sunDir.z);
-      if (flat.lengthSq() < 1e-12) flat.set(1, 0, 0);   // 天体正好在太阳正上/下方
-      flat.normalize();
-      const side = new THREE.Vector3(-flat.z, 0, flat.x);
-      az = flat.clone().multiplyScalar(Math.cos(0.7))
-        .addScaledVector(side, Math.sin(0.7)).normalize();
-    }
-
-    const elev = 0.26;
-    const camDir = az.clone().multiplyScalar(Math.cos(elev));
-    camDir.y = Math.sin(elev);
-    camDir.normalize();
-
-    // 让行星在屏幕上的视觉半径约占 1/10 屏高（直径 1/5）：
-    //   r_px / (d·tan(fov/2)) ≈ 0.1  →  d ≈ r / (0.2·tan(fov/2))（半径口径 0.2 → 直径 1/5）
-    // 再用 2.2 倍半径兜底，避免贴近表面穿模
-    const halfFov = camera.fov * Math.PI / 360;
-    const dist = Math.max(cfg.radius / (0.2 * Math.tan(halfFov)), cfg.radius * 2.2);
-
-    return {
-      dist,
-      theta: Math.atan2(camDir.x, camDir.z),
-      phi: Math.PI / 2 - Math.asin(Math.max(-1, Math.min(1, camDir.y))),
-    };
-  }
-
-  function focusOn(cfg, group) {
-    focusTarget = { cfg, group };
-    orbit.panOffset.set(0, 0, 0);
-    focusFlight = null;
-    zoomRefDist = 0;   // 聚焦接管，停掉缩放动画
-    zoomAnchorObj = null;
-    orbit.tTheta = orbit.theta;
-    orbit.tPhi = orbit.phi;
-    viewTouched = true;
-
-    const wp = new THREE.Vector3();
-    group.getWorldPosition(wp);
-    // 只采用距离取景；方位保持用户当前视角——点标签时是什么角度，
-    // 切进去就是什么角度，不再自动转到向阳面
-    const { dist } = focusFraming(cfg, wp);
-    // 已经比标准取景更近（比如贴脸时星球铺满屏幕、点盘面等于点了它）：
-    // 保持当前距离，选中不应把镜头拉回远处
-    const distToBody = camera.position.distanceTo(wp);
-    const toDist = distToBody < dist
-      ? Math.max(distToBody, cfg.radius * SURFACE_RATIO)
-      : dist;
-
-    // 0.5 秒过渡：距离在起点与目标之间按 smoothstep（对数空间）推进，
-    // target 同一条时间线从当前位置移到星球；期间不改变方位
-    focusFlight = {
-      t0: performance.now(),
-      dur: 500,
-      fromDist: orbit.dist,
-      toDist,
-      fromTarget: orbit.target.clone(),
-    };
-    orbit.tDist = toDist;
-
-    hud.showInfo(cfg);
-  }
-
-  // ?focus=行星 的瞬移版：直接摆好相机，用于截图与分享
-  function focusSnap(cfg, group) {
-    focusTarget = { cfg, group };
-    orbit.panOffset.set(0, 0, 0);
-    focusFlight = null;
-    zoomRefDist = 0;
-    zoomAnchorObj = null;
-    viewTouched = true;
-    const wp = new THREE.Vector3();
-    group.getWorldPosition(wp);
-    const { dist, theta, phi } = focusFraming(cfg, wp);
-
-    orbit.tDist = orbit.dist = dist;
-    orbit.tTheta = orbit.theta = theta;
-    orbit.tPhi = orbit.phi = phi;
-    orbit.target.copy(wp);
-    camera.position.copy(wp).add(
-      new THREE.Vector3(Math.sin(phi) * Math.sin(theta), Math.cos(phi), Math.sin(phi) * Math.cos(theta))
-        .multiplyScalar(dist));
-    camera.lookAt(wp);
-
-    hud.showInfo(cfg);
-  }
-
+  /* ---------- 点击聚焦：状态与过渡在 camera-focus.js ---------- */
   function resetView() {
-    focusTarget = null;
+    focus.clear();
     orbit.panOffset.set(0, 0, 0);
-    focusFlight = null;
-    zoomRefDist = 0;   // 复位接管，停掉缩放动画
-    zoomAnchorObj = null;   // 回到全景，旧锚点不再沿用
-    viewTouched = false;   // 回到全景后，resize 重新允许自适应距离
+    cancelZoom();            // 复位接管，停掉缩放动画，旧锚点不再沿用
+    viewTouched = false;     // 回到全景后，resize 重新允许自适应距离
     orbit.tDist = fitDistance();
     orbit.tTheta = HOME_THETA;
     orbit.tPhi = HOME_PHI;
@@ -676,25 +425,25 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   canvas.addEventListener("click", (e) => {
     if (pointerMoved) return;   // 拖动结束不触发聚焦
     if (e.button !== 0) return; // 右键不聚焦
-    const hit = pickPlanet(e.clientX, e.clientY);
+    const hit = picker.pickPlanet(e.clientX, e.clientY);
     if (hit) {
       // 行星/卫星本体和最小光点的 userData 都是同一个 cfg，回查聚焦对象
       const holder = focusables.find(f => f.cfg === hit.userData);
-      if (holder) focusOn(holder.cfg, holder.group);
+      if (holder) focus.focusOn(holder.cfg, holder.group);
       return;
     }
     // 单击空白取消选中：只释放锁定，保持当前视角
-    if (focusTarget) releaseFocus();
+    if (focus.getTarget()) focus.release();
   });
 
   // Esc 取消选中（保持当前视角，不回到远景）
   addEventListener("keydown", (e) => {
-    if (e.code === "Escape" && focusTarget) releaseFocus();
+    if (e.code === "Escape" && focus.getTarget()) focus.release();
   });
 
   canvas.addEventListener("dblclick", (e) => {
     // 双击天体只聚焦，不回到远景
-    if (pickPlanet(e.clientX, e.clientY)) return;
+    if (picker.pickPlanet(e.clientX, e.clientY)) return;
     resetView();
   });
 
@@ -706,6 +455,9 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
   addEventListener("keydown", (e) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // 与 hud.js / light-hud.js 一致：焦点在按钮/标签/表单上时不劫持按键
+    if (e.target && e.target.closest
+        && e.target.closest("button, a, input, textarea, select, .lbl")) return;
     if (e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD") {
       moveKeys.add(e.code);
       e.preventDefault();
@@ -721,7 +473,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
     // 聚焦过渡中忽略按键（中途取消会让镜头停在半途且仍显示「已聚焦」）；
     // 聚焦态一律环绕，绝不走平移分支（panOffset 累积会把镜头带离行星）。
-    const mode = keyboardMoveMode({ isFocused: !!focusTarget, isFlying: !!focusFlight });
+    const mode = keyboardMoveMode({ isFocused: !!focus.getTarget(), isFlying: focus.isFlying() });
     if (mode === "ignore") return;
     if (zoomRefDist > 0 || orbit.tDist !== orbit.dist) takeOverCamera();
     zoomAnchorObj = null;
@@ -763,7 +515,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     const k = 1 - Math.pow(0.0009, dt);
     orbit.theta += (orbit.tTheta - orbit.theta) * k;
     orbit.phi   += (orbit.tPhi   - orbit.phi)   * k;
-    if (!focusFlight) {
+    if (!focus.isFlying()) {
       const curLog = Math.log(Math.max(orbit.dist, 1e-9));
       const tgtLog = Math.log(Math.max(orbit.tDist, 1e-9));
       orbit.dist = Math.exp(curLog + (tgtLog - curLog) * k);
@@ -775,7 +527,7 @@ export function createCameraRig({ canvas, camera, space, hud }) {
     // 锚点每帧刷新为天体的实时位置：滑行要两三秒，行星自己会走出几十个
     // 「当前距离」，冻结的世界坐标到终点必然脱靶。
     // 收尾帧用终点 r 做最后一次补偿再结束，保证每格零残差。
-    if (zoomRefDist > 0 && !focusTarget) {
+    if (zoomRefDist > 0 && !focus.getTarget()) {
       if (zoomAnchorObj) zoomAnchorObj.getWorldPosition(_zoomAnchor);
       const done = Math.abs(orbit.dist - orbit.tDist) < Math.max(orbit.tDist * 0.01, 1e-9);
       const r = (done ? orbit.tDist : orbit.dist) / zoomRefDist;
@@ -788,45 +540,17 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
     // 目标点 = 基准位置（焦点行星或原点） + 右键平移偏移
     _base.set(0, 0, 0);
-    if (focusTarget) {
-      focusTarget.group.getWorldPosition(_base);
+    const ft = focus.getTarget();
+    if (ft) {
+      ft.group.getWorldPosition(_base);
     }
     _base.add(orbit.panOffset);
 
-    if (focusFlight && focusTarget) {
-      // 聚焦过渡：距离与 target 用同一条 0.5s 时间线，方位不动。
-      // 距离分两段插值——感知上均匀的是「视大小」（∝ 1/距离），不是距离：
-      // 若在距离上对数匀速，星球会在最后一小段时间里指数放大（突然切到）。
-      //   第一段（30% 时间）：对数空间快速穿过空程，缓入缓出；
-      //   第二段（70% 时间）：按 1/d 线性推进，视大小匀速增长、落点平顺。
-      const p = Math.min(1, (performance.now() - focusFlight.t0) / focusFlight.dur);
-      const e = p * p * (3 - 2 * p);
-      orbit.target.lerpVectors(focusFlight.fromTarget, _base, e);
-
-      const d0 = Math.max(focusFlight.fromDist, 1e-9);
-      const d1 = Math.max(focusFlight.toDist, 1e-9);
-      const dShow = d1 * 8;   // 视大小约为到站时的 1/8，从这里开始「看得见」
-      let d;
-      if (d0 > dShow) {
-        const p1 = 0.3;
-        if (p < p1) {
-          const q = p / p1;
-          const qe = q * q * (3 - 2 * q);
-          d = Math.exp(Math.log(d0) + (Math.log(dShow) - Math.log(d0)) * qe);
-        } else {
-          const q = (p - p1) / (1 - p1);
-          const qe = q * q * (3 - 2 * q);
-          d = 1 / ((1 / dShow) + ((1 / d1) - (1 / dShow)) * qe);
-        }
-      } else {
-        d = 1 / ((1 / d0) + ((1 / d1) - (1 / d0)) * e);
-      }
-      orbit.dist = d;
-      if (p >= 1) focusFlight = null;   // 到站后交回常规跟随
-    } else {
+    // 聚焦过渡由 camera-focus.js 推进；返回 true 表示本帧已被过渡接管
+    if (!focus.updateFlight(_base)) {
       const k2 = 1 - Math.pow(0.002, dt);
       // 聚焦且已拉近时目标必须严格跟随行星：近距离下插值滞后会让行星跑出画面
-      if (focusTarget && orbit.dist < 20) {
+      if (ft && orbit.dist < 20) {
         orbit.target.copy(_base);
       } else {
         orbit.target.lerp(_base, k2);
@@ -855,25 +579,25 @@ export function createCameraRig({ canvas, camera, space, hud }) {
   function onResize() {
     MAX_DIST = Math.max(1200, fitDistance() * 2.2);
     if (orbit.tDist > MAX_DIST) orbit.tDist = MAX_DIST;
-    if (!viewTouched && !focusTarget && !distExplicit) orbit.tDist = fitDistance();
+    if (!viewTouched && !focus.getTarget() && !distExplicit) orbit.tDist = fitDistance();
   }
 
   return {
     orbit,
     updateCamera,
     resetView,
-    focusOn,
-    focusSnap,
+    focusOn: focus.focusOn,
+    focusSnap: focus.focusSnap,
     handleWheel,
     fitDistance,
     onResize,
-    getFocusTarget: () => focusTarget,
+    getFocusTarget: focus.getTarget,
     // 调试用：当前推拉锚点是谁
     getZoomAnchorName: () => {
       if (!zoomAnchorObj) return null;
       if (zoomAnchorObj === moonMesh) return "月球";
       if (zoomAnchorObj === sunGroup) return "太阳";
-      const p = planets.find(x => x.group === zoomAnchorObj);
+      const p = space.planets.find(x => x.group === zoomAnchorObj);
       return p ? p.cfg.name : "?";
     },
   };
