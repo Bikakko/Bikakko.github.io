@@ -164,6 +164,8 @@ const MOON = defineBody({
   desc: "384,400 km",
   colorA: 0xb8b4ac,
   material: "standard",
+  // CGI Moon Kit LROC 彩色全球底图（NASA/GSFC/SVS PD），真实陨石坑与月海
+  mapUrl: "assets/textures/moon_2k.jpg",
 });
 
 /* ============================================================
@@ -197,6 +199,8 @@ const EARTH = defineBody({
   colorA: 0x2f6fa8, colorB: 0x2e7a3e, colorC: 0xf2f6ff,
   noiseFreq: 3.6, bandAmp: 0.0,
   earthLike: true,
+  // Blue Marble Next Generation（NASA PD，无云合成）；云层由 shader 动态叠加
+  mapUrl: "assets/textures/earth_2k.jpg",
 
   satellites: [MOON],
 });
