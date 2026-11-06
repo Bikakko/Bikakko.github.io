@@ -266,7 +266,8 @@ const JUPITER = defineBody({
    相对轨道面 26.730°，顺行；293 颗卫星（2026-11）
    环：C 内缘 74,658 km 至 A 外缘 136,780 km；
        卡西尼缝 117,580–122,170 km；恩克缝约 133,590 km。
-       环内明暗为程序化纹理，主要缝隙按真实半径放置。
+       环不透明度由 Voyager RSS τ(r) 实测剖面驱动（ring-profile.js）；
+       下列缝隙半径保留作参考模型，供测试交叉校验剖面数据。
    ============================================================ */
 const SATURN = defineBody({
   name: "土星", type: "气态巨行星",
@@ -302,8 +303,10 @@ const SATURN = defineBody({
   },
 });
 
-// 环带剖面：t 为归一化半径（0 = 内缘，1 = 外缘）。
+// 参考缝隙模型：t 为归一化半径（0 = 内缘，1 = 外缘）。
 // 返回 0 表示缝隙中心，1 表示完全覆盖；缝隙位置由真实半径换算。
+// 渲染不再使用它（不透明度来自 ring-profile.js 实测 τ 剖面）；
+// 保留供测试交叉校验剖面在缝隙处确实低不透明。
 export function ringGap(t, ring) {
   const span = ring.outerKm - ring.innerKm;
   const c0 = (ring.cassiniInnerKm - ring.innerKm) / span;

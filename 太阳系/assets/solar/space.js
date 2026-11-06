@@ -17,6 +17,7 @@ import { makeMinDot } from "./dots.js";
 import { orbitalPointAtE, barycenterCorrectedPosition } from "./orbit-math.js";
 import { makePose } from "./pose.js";
 import { attachBodyMap } from "./textures.js";
+import { RING_PROFILE } from "./ring-profile.js";
 
 /* ============================================================
    1. 星空背景
@@ -257,21 +258,23 @@ function buildRing(cfg) {
   const ring = cfg.ring;
   const inner = kmToUnit(ring.innerKm);
   const outer = kmToUnit(ring.outerKm);
-  const TEXW = 512;
+  // 不透明度用 Voyager 1 RSS 实测 τ(r)（ring-profile.js，2048 texel ≈ 30 km/texel，
+  // 恩克缝 325 km 宽可分辨）；alpha = 1 − e^(−τ)，Beer–Lambert 透射。
+  // 卡西尼缝里的环let、恩克缝、C/B/A 环明暗比全部来自实测数据；
+  // 不再乘程序化 gap/edge 衰减——真实内外边缘与缝隙结构已经在 τ 里。
+  const TEXW = RING_PROFILE.samples;
 
   // 生成环带剖面：颜色 + alpha 都烘进贴图
   const data = new Uint8Array(TEXW * 4);
   for (let i = 0; i < TEXW; i++) {
     const t = i / (TEXW - 1);
+    const coverage = 1 - Math.exp(-RING_PROFILE.tau[i]);
 
+    // 颜色仍是温和程序化条带做反照率变化；缝隙处 coverage≈0，
+    // 任何颜色都被透明度隐藏，可见结构完全由实测 τ 决定
     const bands = (Math.sin(t * 46.0) * 0.5 + 0.5) * 0.42
                 + (Math.sin(t * 118.0 + 1.7) * 0.5 + 0.5) * 0.26
                 + (Math.sin(t * 21.0 + 0.4) * 0.5 + 0.5) * 0.32;
-
-    // 卡西尼缝/恩克缝按真实半径换算；其余明暗仍是程序化纹理
-    const gap = ring.gap(t);
-    const edge = Math.min(1, t / 0.06) * Math.min(1, (1 - t) / 0.08);
-    const coverage = gap * edge;
 
     const mixv = Math.min(1, bands);
     data[i*4+0] = Math.min(255, (0x9c + (0xd8 - 0x9c) * mixv) * 0.92);
