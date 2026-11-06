@@ -1,3 +1,6 @@
+// 注意：pulseRadii / pulseStride / sweepWeight 属于已废弃的多球壳脉冲模型
+// （运行时 light-view 不再引用），相关用例只作历史回归锁定，不代表现行
+// 渲染行为的覆盖率。现行单球面 + 1 光秒亮点的行为需在浏览器验证。
 import test from "node:test";
 import assert from "node:assert/strict";
 import {

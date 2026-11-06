@@ -54,11 +54,10 @@ export const TIME_RATES = [1, 60, 600, 3600, 21600, 86400, 604800, 2592000];
 export const TIME_RATE_DEFAULT = 1;      // 真实时间 1:1
 // 打开光速模式时默认也是 1:1（真实时间），可用 ?rate= 指定其它档
 
-// 脉冲间隔按「光行时」固定为 5 光秒（物理量，与观看倍率无关）。
-// 每个球壳在固定的 emit_k = k·5 光秒发出，半径 = c·(t − emit_k)，
-// 因此 dR/dt ≡ c 严格光速；k 覆盖全部已发射球壳，波纹铺满 0..主波前。
-// MAX_PULSES 只是渲染槽位 / LOD 目标层数：pulseStride 按相机像素尺度
-// 抽样，把可见球壳数压到这个量级，避免中心叠加与密密麻麻。
+// @deprecated 多球壳脉冲模型专用常量：运行时（light-view 的单球面 + 1 光秒
+// 亮点）不再使用，仅 light-math.js 的废弃函数与其测试引用。旧模型设定：
+// 脉冲间隔按光行时固定为 5 光秒，emit_k = k·5 光秒，dR/dt ≡ c；
+// MAX_PULSES 是渲染槽位 / LOD 目标层数。恢复多球壳渲染时才需要改动这里。
 export const PULSE_INTERVAL_LIGHT_SEC = 5;
 export const MAX_PULSES              = 32;
 export const PULSE_FALLBACK_SEC      = PULSE_INTERVAL_LIGHT_SEC;
@@ -75,7 +74,8 @@ export const qLightT      = (() => {
   return v !== null && v >= 0 ? v : null;
 })();
 export const qLightStatic = qStatic || Q.get("lstatic") === "1";
-// ?pulse=<光秒> 覆盖脉冲的物理间隔（默认 5 光秒）
+// @deprecated ?pulse=<光秒> 只服务于已废弃的多球壳模型（见上方 PULSE_*），
+// 运行时不读取；保留解析仅为兼容旧链接不报错。
 export const qPulseLightSec = (() => {
   const v = numParam("pulse");
   return v !== null && v > 0 ? v : PULSE_INTERVAL_LIGHT_SEC;

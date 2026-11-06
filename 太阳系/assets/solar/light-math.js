@@ -36,32 +36,19 @@ export function frontRadius(lightSec) {
   return Math.max(SUN_CFG.radius, Math.max(0, lightSec) * UNITS_PER_LIGHT_SEC);
 }
 
-/* ---------- 脉冲波纹 ----------
-   这是本模块反复出故障的地方，所以把物理模型写死，不再「每帧按当前 t
-   重新算一组位置」。
+/* ---------- 脉冲波纹（已废弃，勿用于新功能） ----------
+   @deprecated 多球壳脉冲模型已被 light-view.js 的「单波前球面 + 1 光秒
+   亮点」取代，运行时不再引用本节任何函数；仅 tests/light-math.test.mjs
+   仍在锁定这套旧模型的数学性质，作为历史回归保留。
 
-   每个光球都有固定的「发射光行时」 emit_k = k·step（step = 5 光秒，
-   物理量，与观看倍率无关）。当前光行时 t 时年龄 age = t − emit_k，
-   半径 R_k = c·age。于是三条不变量同时成立，且是数学上的必然：
-     · dR_k/dt = c —— emit_k 是常数，不可能超光速；
-     · k = 0..floor(t/step) 的半径从主波前一路排到日面 —— 不会只挤在
-       中心一小块，也不会只贴在最外一圈；
-     · 相邻球壳间距恒为 step·c = 5 光秒的距离 —— 即「每 5 光秒的距离
-       出现一个新光球」。
+   旧模型物理设定（存档说明）：每个光球有固定发射光行时 emit_k = k·step
+   （step = 5 光秒），当前光行时 t 时半径 R_k = c·(t − emit_k)，因此
+   dR_k/dt ≡ c、相邻球壳间距恒为 5 光秒。历史上三种故障都来自「用当前 t
+   的归一化比例定位球壳」（超光速 / 波纹挤在中心 / 每秒重排球阵），固定
+   发射时刻后不再可能。pulseStride 按相机像素尺度做 2 的幂抽样，把可见
+   球壳数压到 MAX_PULSES 量级。若将来恢复多球壳渲染，从这里接手。 */
 
-   历史三种故障都来自「用当前 t 的归一化比例定位球壳」：
-     · 归一化成 R(t)·f：f 里含 t，dR/dt 被放大成 c 的若干倍 → 超光速；
-     · 固定层数 × 固定间隔从 0 排：空间跨度锁死在 层数×step·c
-       （32×5 光秒 = 3.2 单位），波前跑到 302 单位时波纹仍挤在中心 → 太小；
-     · floor(t/step) 离散抽样：1:1 下每秒重排整个球阵 → 心跳抖动。
-   发射时刻固定后这三件事都不再可能。
-
-   剩下的只是渲染问题：t 可达 15005 光秒，物理上有 3001 层球壳，屏幕
-   不可能清晰显示。按相机的世界像素尺度选一个 2 的幂抽样步长 stride，
-   只画 k 为 stride 整数倍的球壳 —— 它们仍落在真实的 5 光秒网格上，
-   仍严格以 c 运动。stride 只依赖相机、不依赖 t，因此播放过程中球壳
-   索引集合恒定、平滑推进；可见半径窗口两端的增删由 light-view 用
-   淡入淡出隐藏。纯函数 → 暂停 / 重播 / 拖标尺 / ?lt 截图可复现。 */
+/** @deprecated 运行时未使用，仅测试锁定；见本节头部说明。 */
 export function pulseStride(viewRadius, intervalSec = PULSE_FALLBACK_SEC,
                             maxCount = MAX_PULSES) {
   const step = Number.isFinite(intervalSec) && intervalSec > 0
@@ -77,6 +64,7 @@ export function pulseStride(viewRadius, intervalSec = PULSE_FALLBACK_SEC,
 
 // viewRadius：相机当前能看见的半径范围（世界单位），由 light-view 按
 // camDist / fov 计算，不含 t，故 stride 在播放中恒定。
+/** @deprecated 运行时未使用，仅测试锁定；见「脉冲波纹」节头部说明。 */
 export function pulseRadii(lightSec, intervalSec = PULSE_FALLBACK_SEC,
                            viewRadius = Infinity, maxCount = MAX_PULSES) {
   const step = Number.isFinite(intervalSec) && intervalSec > 0
@@ -101,13 +89,11 @@ export function pulseRadii(lightSec, intervalSec = PULSE_FALLBACK_SEC,
   return radii;
 }
 
-/* ---------- 球内「光波扫过」权重 ----------
-   相机被光球包裹时，只有波面正掠过「观察视野半径」（camRadius，球内取
-   相机距离的一个比例）的那一两波应该发亮：更内侧与已越过视野的球都淡出。
-   于是随时间推进，各球壳依次经过 camRadius，视觉上就是一波一波的光波
-   扫过去，而不是一圈圈静止的同心球壳。权重不对称：波面迎面涌来
-   （shell < cam）时拖尾长、越过视野后快速淡出，给出「扫过去」的方向感。
-   纯函数，与 GLSL 中的公式保持一致，供单测锁定。 */
+/* ---------- 球内「光波扫过」权重（已废弃） ----------
+   @deprecated 旧多球壳模型中「相机被包裹时一波波扫过」的亮度权重。
+   现行 light-view.js 是单球面 + uInside 增强，不再引用本函数；仅测试
+   保留。旧设定存档：只有掠过观察视野半径 camRadius 的波面发亮，权重
+   不对称（迎面拖尾长、越过后快速淡出）以给出方向感。 */
 export function sweepWeight(shellRadius, camRadius, width) {
   const w = Math.max(Number.isFinite(width) ? width : 0, 1e-9);
   const d = (shellRadius - camRadius) / w;
@@ -149,12 +135,13 @@ const _v = {
   set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; },
 };
 
-// 发射历元八颗行星的瞬时距离与光行时（偏心率带来的浮动因此可见）。
-// 光是 emissionDays 时发出的，到达时刻由发射时的行星位置决定；
-// 光走 4 小时期间行星位移可忽略，故标尺在播放中保持稳定。
-export function lightArrivals(emissionDays) {
+// 给定历元八颗行星的瞬时距离与光行时（偏心率带来的浮动因此可见）。
+// light-hud 每帧用当前 simTime 调用：标尺刻度与 light-view 光线终点
+// （同样按当前 simTime 定位行星）因此始终一致，高倍率下行星光程内
+// 位移也不会造成「已越过 n/8」与视觉脱节。
+export function lightArrivals(days) {
   return PLANETS.map((cfg, index) => {
-    orbitalPosition(cfg, emissionDays, _v);
+    orbitalPosition(cfg, days, _v);
     const distance = Math.hypot(_v.x, _v.y, _v.z);
     return { index, name: cfg.name, distance, seconds: lightTimeSeconds(distance) };
   });
