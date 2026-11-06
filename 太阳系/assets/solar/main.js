@@ -3,7 +3,7 @@
    - 行星表面：着色器程序化噪声，不加载任何贴图
    - 轨道相机：自实现，远景限制在黄道面上方
    - 触屏：touch-action + 手写 touch 事件
-   - 光速可视化：独立光行时时钟 + 波前球壳（?light=1 / L 键）
+   - 光速可视化：与天体共用统一 simTime 时间轴 + 波前球面（?light=1 / L 键）
    ============================================================ */
 import * as THREE from "three";
 import { Q, qStatic, qFocus } from "./config.js";
@@ -24,12 +24,23 @@ window.__solarBuild = BUILD;
 if (qStatic) document.documentElement.classList.add("static");
 
 const canvas = document.getElementById("c");
-const renderer = new THREE.WebGLRenderer({
-  canvas, antialias: true, powerPreference: "high-performance",
-  // 近平面最小 1e-6、远平面 6000（比值 ~6e9）：常规深度会让远景天体
-  // 全部量化到 1.0 而被裁掉。自定义 ShaderMaterial 已注入对数深度片段。
-  logarithmicDepthBuffer: true,
-});
+let renderer;
+try {
+  renderer = new THREE.WebGLRenderer({
+    canvas, antialias: true, powerPreference: "high-performance",
+    // 近平面最小 1e-6、远平面 6000（比值 ~6e9）：常规深度会让远景天体
+    // 全部量化到 1.0 而被裁掉。自定义 ShaderMaterial 已注入对数深度片段。
+    logarithmicDepthBuffer: true,
+  });
+} catch (err) {
+  // WebGL 不可用（硬件加速被禁/驱动缺失等）时给出明确提示，
+  // 而不是让页面永远卡在 GENERATING；随后抛出终止模块初始化。
+  const ld = document.getElementById("loader");
+  ld.textContent = "无法初始化 WebGL：请确认浏览器已启用硬件加速，或更换浏览器";
+  ld.style.letterSpacing = "0.1em";
+  console.error("[solar] WebGL 初始化失败", err);
+  throw err;
+}
 // 注意：ACES tone mapping 与 sRGB 输出只作用于内建材质（月球、土星环）；
 // 行星/太阳/星空/光晕是自定义 ShaderMaterial，直接输出原始颜色——这是
 // 既有取色刻意绕过色彩管线的结果，改动需整体重新调色。
@@ -137,7 +148,7 @@ function animate() {
   for (const c of coronas) c.quaternion.copy(camera.quaternion);
   stars.points.position.copy(camera.position);
 
-  // 5) 光速层：推进独立的光行时时钟、更新波前与光线、刷新 HUD
+  // 5) 光速层：由统一 simTime 派生光行时，更新波前与光线、刷新 HUD（无独立时钟）
   lightHud.tick();
 
   renderer.render(scene, camera);
