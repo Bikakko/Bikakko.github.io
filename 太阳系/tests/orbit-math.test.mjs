@@ -159,7 +159,7 @@ test("地月质心偏移始终约 4670 km（在近/远地点之间）", () => {
   }
 });
 
-test("轨道线以 LineLoop 闭合，且不修改地球真实轨迹采样点", () => {
+test("轨道线绘制闭合的质心参考椭圆，地球本体摆动不传入轨道线", () => {
   const days = 123.4;
   for (const cfg of PLANETS) {
     const line = makeOrbitLine(cfg, days);
@@ -167,17 +167,9 @@ test("轨道线以 LineLoop 闭合，且不修改地球真实轨迹采样点", (
     assert.ok(line.isLineLoop, `${cfg.name} 必须绘制闭合线段`);
     assert.equal(attr.count, 8192, `${cfg.name} 不额外复制首点`);
 
-    const first = out();
-    const last = out();
     const lastFraction = (attr.count - 1) / attr.count;
-    if ((cfg.satellites || []).length > 0) {
-      barycenterCorrectedPosition(cfg, days, first);
-      barycenterCorrectedPosition(cfg, days + lastFraction * cfg.orbitDays, last);
-    } else {
-      orbitalPointAtE(cfg, 0, first, days / 36525);
-      orbitalPointAtE(cfg, lastFraction * TAU, last, days / 36525);
-    }
-
+    const first = orbitalPointAtE(cfg, 0, out(), days / 36525);
+    const last = orbitalPointAtE(cfg, lastFraction * TAU, out(), days / 36525);
     for (const [i, expected] of [[0, first], [attr.count - 1, last]]) {
       // 顶点缓冲是 Float32Array：与理论值的 float32 舍入结果逐位一致。
       assert.equal(attr.getX(i), Math.fround(expected.x), `${cfg.name} 顶点 ${i} x`);
@@ -185,6 +177,12 @@ test("轨道线以 LineLoop 闭合，且不修改地球真实轨迹采样点", (
       assert.equal(attr.getZ(i), Math.fround(expected.z), `${cfg.name} 顶点 ${i} z`);
     }
   }
+
+  // 地球轨道 cfg 对应地月质心；本体位置则由另一函数扣除月球质量比偏移。
+  const earth = PLANETS.find(p => p.name === "地球");
+  const bary = orbitalPosition(earth, days, out());
+  const body = barycenterCorrectedPosition(earth, days, out());
+  assert.ok(Math.hypot(body.x - bary.x, body.y - bary.y, body.z - bary.z) > 0);
 });
 
 test("solveKepler 在夹取上限 e=0.9 仍收敛（极端 ?t= 历元）", () => {

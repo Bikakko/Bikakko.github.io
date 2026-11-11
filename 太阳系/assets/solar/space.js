@@ -14,7 +14,7 @@ import {
   LOGDEPTH_PARS_VERT, LOGDEPTH_VERT, LOGDEPTH_PARS_FRAG, LOGDEPTH_FRAG,
 } from "./shaders.js";
 import { makeMinDot } from "./dots.js";
-import { orbitalPointAtE, barycenterCorrectedPosition } from "./orbit-math.js";
+import { orbitalPointAtE } from "./orbit-math.js";
 import { makePose } from "./pose.js";
 import { attachBodyMap } from "./textures.js";
 import { RING_PROFILE } from "./ring-profile.js";
@@ -244,24 +244,14 @@ function buildCorona(radius, opacity, color, sunUniforms) {
 const ORBIT_SEG = 8192;
 
 // 就地重写顶点，不新建几何/材质：跳到别的历元时只更新数据。
-// 只保存一周内的真实采样点；闭合交给 LineLoop，不强行把末点改成首点。
-// 地球的 JPL 平黄经速率与 orbitDays 并不严格互逆，且月相一年后不重复，
-// 所以地球真实轨迹的首末点本来就可能有数千公里差异。
+// 轨道线统一绘制当前历元的质心参考椭圆。地球的 JPL 要素本来就是地月质心，
+// 月球造成的周期性偏移只作用于地球本体，不让轨道线追随本体而破坏闭合。
 function fillOrbitPoints(cfg, days, attr) {
   const arr = attr.array;
   const v = new THREE.Vector3();
   const T = days / 36525;
-  const hasMoon = (cfg.satellites || []).length > 0;
   for (let i = 0; i < ORBIT_SEG; i++) {
-    if (hasMoon) {
-      // 有卫星的天体（地球）：按时间采样「含地月质心摆动」的真实轨迹，
-      // 而不是把整条质心椭圆按瞬时偏移平移——后者只保证当下穿过本体，
-      // 椭圆其余部分并不等于地球路径。
-      barycenterCorrectedPosition(cfg, days + (i / ORBIT_SEG) * cfg.orbitDays, v);
-    } else {
-      // 无卫星：按偏近点角均匀采样的参考椭圆，要素取 days 所在历元
-      orbitalPointAtE(cfg, (i / ORBIT_SEG) * TAU, v, T);
-    }
+    orbitalPointAtE(cfg, (i / ORBIT_SEG) * TAU, v, T);
     arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z;
   }
   attr.needsUpdate = true;
