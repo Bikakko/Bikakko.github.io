@@ -77,12 +77,9 @@ const hud = createHud({
 rig = createCameraRig({ canvas, camera, space, hud });
 const labels = createLabels({ space, rig, camera });
 
-// 两个左侧抽屉互斥；lightHud 先建，timePanel 用 let 兜住初始化期的回调
-let timePanel;
-const lightHud = createLightHud({
-  hud, lightView, onOpen: () => timePanel && timePanel.setPanelOpen(false),
-});
-timePanel = createTimePanel({ hud, onOpen: () => lightHud.close() });
+// 两个抽屉互不干涉，可同时打开 / 关闭（?time=1 与 ?light=1 也可同给）
+const lightHud = createLightHud({ hud, lightView });
+const timePanel = createTimePanel({ hud });
 
 // 调试探针按需加载，正常访问不下载解析
 if (Q.get("debug") === "1") {

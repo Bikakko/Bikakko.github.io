@@ -1,8 +1,8 @@
 /* ============================================================
-   时间面板与地球状态卡
+   时间面板与位置二级开关
 
-   面板只负责「把用户意图翻译成 simTime」，状态卡只负责「把 simTime
-   翻译成读数」。两者都不自己算天体位置：位置来自 hud 的统一时间轴，
+   面板只负责「把用户意图翻译成 simTime」，位置区（时间抽屉里的二级开关，
+   默认收起）只负责「把 simTime 翻译成读数」。两者都不自己算天体位置：位置来自 hud 的统一时间轴，
    读数来自 earth-state 的同一套几何，所以屏幕上的明暗交界与面板上的
    昼夜/日出日落必然一致。
    ============================================================ */
@@ -42,7 +42,7 @@ function systemZoneName() {
   catch (_) { return null; }
 }
 
-export function createTimePanel({ hud, onOpen }) {
+export function createTimePanel({ hud }) {
   const $ = (id) => document.getElementById(id);
   const panel = $("tp");
   const toggleBtn = $("timeToggle");
@@ -136,8 +136,6 @@ export function createTimePanel({ hud, onOpen }) {
   /* ---------- 开合 ---------- */
   let panelOpen = false;
   function setPanelOpen(next) {
-    // 矮屏上两个抽屉会挤在一起：右上角时间抽屉与左下角光速面板同时只开一个
-    if (next && onOpen) onOpen();
     panelOpen = next;
     panel.classList.toggle("on", next);
     toggleBtn.classList.toggle("on", next);
@@ -147,7 +145,9 @@ export function createTimePanel({ hud, onOpen }) {
   }
   toggleBtn.addEventListener("click", (e) => { e.stopPropagation(); setPanelOpen(!panelOpen); });
 
-  let stateOpen = !matchMedia("(max-width: 560px)").matches;
+  // 位置是时间抽屉里的二级开关，一律默认收起；
+  // 收起时 refresh() 直接跳过整套天文解算，不白白算日出日落。
+  let stateOpen = false;
   function setStateOpen(next) {
     stateOpen = next;
     stateEl.classList.toggle("open", next);
@@ -307,7 +307,7 @@ export function createTimePanel({ hud, onOpen }) {
       : `ΔT ${deltaTSeconds(ms).toFixed(3)} s · 适用 ${MODEL_MIN_YEAR}–${MODEL_MAX_YEAR}`);
     noteEl.classList.toggle("warn", note.level === "out");
 
-    setText(stateTitle, place ? `地球 · ${place.name}` : `地球 · ${fmtLat(lat)} ${fmtLon(lon)}`);
+    setText(stateTitle, place ? `位置 · ${place.name}` : `位置 · ${fmtLat(lat)} ${fmtLon(lon)}`);
     if (!stateOpen) return;
 
     const utcHours = (((ms % 86400000) + 86400000) % 86400000) / 3600000;

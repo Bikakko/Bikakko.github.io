@@ -15,7 +15,7 @@ import {
   toLogAxis, fromLogAxis, LOG_AXIS_MAX, LIGHT_TICKS,
 } from "./light-math.js";
 
-export function createLightHud({ hud, lightView, onOpen }) {
+export function createLightHud({ hud, lightView }) {
   const root = document.getElementById("light");
   const toggleBtn = document.getElementById("lightToggle");
   const clockEl = document.getElementById("lightClock");
@@ -149,8 +149,6 @@ export function createLightHud({ hud, lightView, onOpen }) {
   }
 
   function setOn(next) {
-    // 左上角的时间面板与这里共用左侧空间，矮屏上会叠在一起：同时只开一个
-    if (next && onOpen) onOpen();
     on = next;
     root.classList.toggle("on", on);
     toggleBtn.classList.toggle("on", on);
