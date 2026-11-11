@@ -5,6 +5,7 @@ import {
   barycenterCorrectedPosition,
 } from "../assets/solar/orbit-math.js";
 import { MOON_CFG, PLANETS } from "../assets/solar/bodies.js";
+import { makeOrbitLine } from "../assets/solar/space.js";
 
 const TAU = Math.PI * 2;
 const AU_UNIT = 10.06;
@@ -155,6 +156,34 @@ test("地月质心偏移始终约 4670 km（在近/远地点之间）", () => {
     const offsetKm = Math.hypot(bary.x - body.x, bary.y - body.y, bary.z - body.z)
       * (KM_PER_AU / AU_UNIT);
     assert.ok(offsetKm > 4300 && offsetKm < 5000, `t=${t} 偏移 ${offsetKm} km`);
+  }
+});
+
+test("轨道线以 LineLoop 闭合，且不修改地球真实轨迹采样点", () => {
+  const days = 123.4;
+  for (const cfg of PLANETS) {
+    const line = makeOrbitLine(cfg, days);
+    const attr = line.geometry.getAttribute("position");
+    assert.ok(line.isLineLoop, `${cfg.name} 必须绘制闭合线段`);
+    assert.equal(attr.count, 8192, `${cfg.name} 不额外复制首点`);
+
+    const first = out();
+    const last = out();
+    const lastFraction = (attr.count - 1) / attr.count;
+    if ((cfg.satellites || []).length > 0) {
+      barycenterCorrectedPosition(cfg, days, first);
+      barycenterCorrectedPosition(cfg, days + lastFraction * cfg.orbitDays, last);
+    } else {
+      orbitalPointAtE(cfg, 0, first, days / 36525);
+      orbitalPointAtE(cfg, lastFraction * TAU, last, days / 36525);
+    }
+
+    for (const [i, expected] of [[0, first], [attr.count - 1, last]]) {
+      // 顶点缓冲是 Float32Array：与理论值的 float32 舍入结果逐位一致。
+      assert.equal(attr.getX(i), Math.fround(expected.x), `${cfg.name} 顶点 ${i} x`);
+      assert.equal(attr.getY(i), Math.fround(expected.y), `${cfg.name} 顶点 ${i} y`);
+      assert.equal(attr.getZ(i), Math.fround(expected.z), `${cfg.name} 顶点 ${i} z`);
+    }
   }
 });
 

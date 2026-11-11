@@ -243,13 +243,16 @@ function buildCorona(radius, opacity, color, sunUniforms) {
 // 贴近观察会明显脱离行星实际位置；8192 段降到半径的 ~1%，肉眼不可见
 const ORBIT_SEG = 8192;
 
-// 就地重写顶点，不新建几何/材质：跳到别的历元时只更新数据
+// 就地重写顶点，不新建几何/材质：跳到别的历元时只更新数据。
+// 只保存一周内的真实采样点；闭合交给 LineLoop，不强行把末点改成首点。
+// 地球的 JPL 平黄经速率与 orbitDays 并不严格互逆，且月相一年后不重复，
+// 所以地球真实轨迹的首末点本来就可能有数千公里差异。
 function fillOrbitPoints(cfg, days, attr) {
   const arr = attr.array;
   const v = new THREE.Vector3();
   const T = days / 36525;
   const hasMoon = (cfg.satellites || []).length > 0;
-  for (let i = 0; i <= ORBIT_SEG; i++) {
+  for (let i = 0; i < ORBIT_SEG; i++) {
     if (hasMoon) {
       // 有卫星的天体（地球）：按时间采样「含地月质心摆动」的真实轨迹，
       // 而不是把整条质心椭圆按瞬时偏移平移——后者只保证当下穿过本体，
@@ -264,9 +267,9 @@ function fillOrbitPoints(cfg, days, attr) {
   attr.needsUpdate = true;
 }
 
-function makeOrbitLine(cfg, days) {
+export function makeOrbitLine(cfg, days) {
   const geo = new THREE.BufferGeometry();
-  const attr = new THREE.BufferAttribute(new Float32Array((ORBIT_SEG + 1) * 3), 3);
+  const attr = new THREE.BufferAttribute(new Float32Array(ORBIT_SEG * 3), 3);
   attr.setUsage(THREE.DynamicDrawUsage);
   geo.setAttribute("position", attr);
   fillOrbitPoints(cfg, days, attr);
@@ -275,7 +278,8 @@ function makeOrbitLine(cfg, days) {
     color: 0x4a5a80, transparent: true, opacity: 0.34,
     depthWrite: false,
   });
-  return new THREE.Line(geo, mat);
+  // LineLoop 只增加末点到首点的绘制连接，不改变任何轨迹采样坐标。
+  return new THREE.LineLoop(geo, mat);
 }
 
 /* ============================================================
