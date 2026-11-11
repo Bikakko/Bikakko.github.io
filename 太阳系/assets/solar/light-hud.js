@@ -28,6 +28,7 @@ export function createLightHud({ hud, lightView }) {
   const planetsEl = document.getElementById("lightPlanets");
   const listEl = document.getElementById("lightList");
   const replayBtn = document.getElementById("lightReplay");
+  const beadStepEl = document.getElementById("lightBeadStep");
 
   let on = false;
   let emissionT = hud.getSimTime();   // 光脉冲发射历元（天）
@@ -38,7 +39,7 @@ export function createLightHud({ hud, lightView }) {
   let scrubbing = false;
   // 脏检查缓存：内容没变就不写 DOM（对照 labels.js 的模式）。
   // 1:1 真实时间下绝大多数帧这些值都不变，避免无谓的样式计算。
-  let lastClock = "", lastPct = "", lastSub = "", lastRate = "", lastDesc = "";
+  let lastClock = "", lastPct = "", lastSub = "", lastRate = "", lastDesc = "", lastStep = "";
 
   const getLightSec = () => lightSecondsSince(hud.getSimTime(), emissionT);
 
@@ -134,6 +135,10 @@ export function createLightHud({ hud, lightView }) {
 
     const rate = hud.rateLabel();
     if (rateEl && rate !== lastRate) { lastRate = rate; rateEl.textContent = rate; }
+
+    // 亮点的抽稀步长由本帧视距决定（lightView.update 先于 render 执行）
+    const step = String(lightView.getBeadStep());
+    if (beadStepEl && step !== lastStep) { lastStep = step; beadStepEl.textContent = step; }
   }
 
   function tick() {

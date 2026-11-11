@@ -11,6 +11,7 @@ import { orbitalPosition } from "../assets/solar/orbit-math.js";
 globalThis.window = { innerHeight: 1080, devicePixelRatio: 1 };
 
 const MAX_BEADS = 20000;
+const MIN_GAP_PX = 12;
 const out = () => ({ x: 0, y: 0, z: 0, set(x, y, z) { this.x = x; this.y = y; this.z = z; return this; } });
 
 function setup() {
@@ -21,8 +22,24 @@ function setup() {
   const group = scene.children.find(o => o.isGroup);
   const beads = group.children.filter(o => o.isPoints);
   const rays = group.children.filter(o => o.isLine);
-  return { view, group, beads, rays, geo: beads[0].geometry };
+  return { view, scene, camera, group, beads, rays, geo: beads[0].geometry };
 }
+
+// 相机到八条「太阳→行星」线段的最近距离：纯几何量，独立于被测实现
+function nearestRayDistance(camera, simTime) {
+  const cam = camera.position;
+  let best = Infinity;
+  for (const cfg of PLANETS) {
+    const p = orbitalPosition(cfg, simTime, new THREE.Vector3());
+    const len = p.length();
+    const t = Math.min(len, Math.max(0, cam.dot(p) / len));
+    best = Math.min(best, p.clone().multiplyScalar(t / len).sub(cam).length());
+  }
+  return best;
+}
+
+const projScaleOf = (camera) =>
+  (window.innerHeight * 0.5) / Math.tan(camera.fov * Math.PI / 360);
 
 test("八条光线共享同一份亮点缓冲，drawRange 初始覆盖全缓冲", () => {
   const { beads, geo } = setup();
@@ -31,29 +48,31 @@ test("八条光线共享同一份亮点缓冲，drawRange 初始覆盖全缓冲"
   assert.equal(geo.drawRange.count, Infinity);   // 未 update 前保持 three 默认
 });
 
-test("drawRange 按 min(波前, 最长光线) 收敛，不再全量跑 20000 顶点", () => {
+test("drawRange 按 min(波前, 光线长) / 抽稀步长 收敛，不再全量跑 20000 顶点", () => {
   const { view, geo } = setup();
-  const maxRayAt = t => Math.max(...PLANETS.map(cfg => {
+  const rayLens = t => PLANETS.map(cfg => {
     const p = orbitalPosition(cfg, t, out());
     return Math.hypot(p.x, p.y, p.z);
-  }));
+  });
+  const expected = (lightSec, t) => {
+    const R = frontRadius(lightSec);
+    const step = view.getBeadStep();
+    const need = Math.max(...rayLens(t).map(len =>
+      Math.floor(Math.min(R, len) / (UNITS_PER_LIGHT_SEC * step)) + 1));
+    return Math.min(MAX_BEADS, need);
+  };
 
-  // 波前刚出发：只需日面半径内的几个点
   view.update(0, 0);
-  const r0 = frontRadius(0);
-  assert.equal(geo.drawRange.count, Math.floor(Math.min(r0, maxRayAt(0)) / UNITS_PER_LIGHT_SEC) + 1);
+  assert.equal(geo.drawRange.count, expected(0, 0));
   assert.ok(geo.drawRange.count < 10);
 
-  // 600 光秒：波前短于所有外行星光线，点数 ≈ 600 + 1（浮点边界允许 ±1）
   view.update(600, 600 / 86400);
-  assert.ok(Math.abs(geo.drawRange.count - 601) <= 1, `count=${geo.drawRange.count}`);
+  assert.equal(geo.drawRange.count, expected(600, 600 / 86400));
 
-  // 波前越过海王星：点数被最长光线夹住，仍远小于 MAX_BEADS
   const tFar = 20000 / 86400;
   view.update(20000, tFar);
-  const expected = Math.min(MAX_BEADS, Math.floor(maxRayAt(tFar) / UNITS_PER_LIGHT_SEC) + 1);
-  assert.equal(geo.drawRange.count, expected);
-  assert.ok(expected < MAX_BEADS);
+  assert.equal(geo.drawRange.count, expected(20000, tFar));
+  assert.ok(geo.drawRange.count < MAX_BEADS);
 });
 
 test("drawRange 只在点数变化时重写（脏检查）", () => {
@@ -66,8 +85,41 @@ test("drawRange 只在点数变化时重写（脏检查）", () => {
   view.update(600, 600 / 86400);
   view.update(600, 600 / 86400);
   assert.equal(calls, 1);
-  view.update(601, 601 / 86400);
+  // 跨过一个抽稀间隔才会多出一颗点
+  const step = view.getBeadStep();
+  view.update(600 + step, (600 + step) / 86400);
   assert.equal(calls, 2);
+});
+
+test("全景视距下亮点按整数光秒抽稀，屏幕间距始终 ≥ 12px（回归：曾经恒为 0 像素）", () => {
+  const { view, camera, beads } = setup();
+  const simTime = 0;
+  // 418 单位的全景视距：1 光秒只投影成 0.05px，旧实现把全部亮点淡出
+  view.update(15010, simTime);
+  const step = view.getBeadStep();
+  assert.ok(Number.isInteger(step) && step > 1, `全景应抽稀，实得 step=${step}`);
+
+  const near = nearestRayDistance(camera, simTime);
+  const gapPx = UNITS_PER_LIGHT_SEC * step * projScaleOf(camera) / near;
+  assert.ok(gapPx >= MIN_GAP_PX, `最近处间距 ${gapPx}px 应 ≥ ${MIN_GAP_PX}`);
+  // 步长取最小整数：再减 1 就不满足间距下限
+  if (step > 1) {
+    const tighter = UNITS_PER_LIGHT_SEC * (step - 1) * projScaleOf(camera) / near;
+    assert.ok(tighter < MIN_GAP_PX, `step=${step} 不是最小可行步长`);
+  }
+  for (const b of beads) assert.equal(b.material.uniforms.uStride.value, step);
+});
+
+test("贴近行星时步长回到 1：仍是逐颗的 1 光秒亮点", () => {
+  const simTime = 0;
+  const earth = PLANETS.find(p => p.name === "地球");
+  const p = orbitalPosition(earth, simTime, new THREE.Vector3());
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(48, 1, 1e-6, 6000);
+  camera.position.copy(p).add(new THREE.Vector3(earth.radius * 3, 0, 0));
+  const view = createLightView(scene, camera);
+  view.update(p.length() / UNITS_PER_LIGHT_SEC + 2, simTime);
+  assert.equal(view.getBeadStep(), 1);
 });
 
 test("每条光线的 uRayLen/uFront 与当前历元行星距离一致", () => {
@@ -81,10 +133,80 @@ test("每条光线的 uRayLen/uFront 与当前历元行星距离一致", () => {
     assert.ok(Math.abs(b.material.uniforms.uRayLen.value - len) < 1e-9);
     assert.ok(Math.abs(b.material.uniforms.uFront.value - R) < 1e-9);
     assert.ok(Math.abs(rays[i].material.uniforms.uFront.value - R) < 1e-9);
-    // 光线终点 = 行星当前位置（float32 缓冲，容差按 ~300 单位的 eps 取）
+    // 光线顶点存「世界坐标 − 相机位置」，加回 line.position 应还原行星位置
     const arr = rays[i].geometry.attributes.position.array;
-    assert.ok(Math.abs(arr[3] - p.x) < 1e-4 && Math.abs(arr[4] - p.y) < 1e-4 && Math.abs(arr[5] - p.z) < 1e-4);
+    const lp = rays[i].position;
+    assert.ok(Math.abs(arr[3] + lp.x - p.x) < 1e-4
+      && Math.abs(arr[4] + lp.y - p.y) < 1e-4
+      && Math.abs(arr[5] + lp.z - p.z) < 1e-4);
+    assert.ok(Math.abs(arr[0] + lp.x) < 1e-4
+      && Math.abs(arr[1] + lp.y) < 1e-4
+      && Math.abs(arr[2] + lp.z) < 1e-4, "起点应是太阳（世界原点）");
   });
+});
+
+test("光线顶点是相机相对小量：贴近行星时端精度不被 float32 量化掉", () => {
+  const simTime = 0;
+  const neptune = PLANETS[PLANETS.length - 1];
+  const p = orbitalPosition(neptune, simTime, out());
+
+  // 相机贴到海王星旁边（1.05 倍半径），光线终点应只剩 ~1e-3 的相机距离
+  const R = neptune.radius * 1.05;
+  const cam = new THREE.Vector3(p.x + R, p.y, p.z);
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(48, 1, 1e-6, 6000);
+  camera.position.copy(cam);
+  const view = createLightView(scene, camera);
+  view.update(20000, simTime);
+  const group = scene.children.find(o => o.isGroup);
+  const line = group.children.filter(o => o.isLine).pop();
+  const arr = line.geometry.attributes.position.array;
+  const end = new THREE.Vector3(arr[3], arr[4], arr[5]);
+  assert.ok(end.length() < R * 1.01,
+    `终点应是相机相对小量（~${R}），实得 ${end.length()}`);
+  assert.ok(line.position.distanceTo(cam) < 1e-12, "line.position 应跟随相机");
+  // 还原世界坐标仍落在行星上（float32 在 ~300 量级的 eps 约 3e-5）
+  const world = end.clone().add(line.position);
+  assert.ok(world.distanceTo(new THREE.Vector3(p.x, p.y, p.z)) < 1e-4);
+});
+
+test("亮点锚点是相机相对小量，且还原出的世界位置落在光线上", () => {
+  const simTime = 0;
+  const neptune = PLANETS[PLANETS.length - 1];
+  const p = orbitalPosition(neptune, simTime, new THREE.Vector3());
+  const camDist = neptune.radius * 1.05;
+  const cam = p.clone().add(new THREE.Vector3(camDist, 0, 0));
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(48, 1, 1e-6, 6000);
+  camera.position.copy(cam);
+  const view = createLightView(scene, camera);
+  const lightSec = p.length() / UNITS_PER_LIGHT_SEC + 2;
+  view.update(lightSec, simTime);
+
+  const group = scene.children.find(o => o.isGroup);
+  const beads = group.children.filter(o => o.isPoints).pop();
+  const u = beads.material.uniforms;
+  assert.ok(beads.position.distanceTo(cam) < 1e-12, "beads.position 应跟随相机");
+  assert.ok(u.uAnchorRel.value.length() < camDist * 1.01,
+    `锚点应是相机相对小量，实得 ${u.uAnchorRel.value.length()}`);
+  assert.ok(Math.abs(u.uFrontRel.value) < 4 * UNITS_PER_LIGHT_SEC,
+    `波前刚过行星，uFrontRel 应只有几光秒，实得 ${u.uFrontRel.value}`);
+
+  // 锚点 + 相机 = 光线上的点；沿 uDir 走 uFrontRel 应正好到波前
+  const R = frontRadius(lightSec);
+  const anchorWorld = u.uAnchorRel.value.clone().add(cam);
+  const dir = u.uDir.value;
+  assert.ok(Math.abs(anchorWorld.length() - anchorWorld.dot(dir)) < 1e-9,
+    "锚点应落在太阳→行星的射线上");
+  const frontWorld = anchorWorld.clone().addScaledVector(dir, u.uFrontRel.value);
+  assert.ok(Math.abs(frontWorld.length() - R) < 1e-9, "锚点 + uFrontRel 应是波前半径");
+
+  // 近距亮点（k 很小）的世界坐标必须精确落在光线上，误差远小于相机距离
+  for (const k of [0, 1, 2, 3]) {
+    const world = anchorWorld.clone().addScaledVector(dir, u.uFrontRel.value - k * UNITS_PER_LIGHT_SEC);
+    const cross = world.clone().cross(dir).length();
+    assert.ok(cross < camDist * 1e-6, `第 ${k} 颗亮点偏离光线 ${cross}`);
+  }
 });
 
 test("相机进入波前球内时 isInside 翻转", () => {

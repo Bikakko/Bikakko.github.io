@@ -44,7 +44,10 @@ export function createCameraRig({ canvas, camera, space, hud }) {
 
   function fitDistance() {
     const vFov = camera.fov * Math.PI / 180;
-    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * camera.aspect);
+    // 视口尚未布局时 innerWidth/innerHeight 是 0/0 = NaN。距离一旦变成 NaN，
+    // 对数缓动 log(max(NaN,1e-9)) 永远是 NaN，resize 只改 tDist 救不回来。
+    const aspect = camera.aspect > 0 ? camera.aspect : 1;
+    const hFov = 2 * Math.atan(Math.tan(vFov / 2) * aspect);
 
     // 竖屏时水平视角很窄，必须按「水平方向能否装下」来算。
     // 再给标签留出固定像素宽度：屏幕宽度的 22%（两侧各 11%）不让行星进去。

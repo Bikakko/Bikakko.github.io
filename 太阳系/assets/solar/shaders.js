@@ -87,6 +87,7 @@ export function makePlanetMaterial(cfg) {
       varying vec3 vPos;
       varying vec3 vNormalW;
       varying vec3 vWorldPos;
+      varying vec3 vViewPos;
       ${LOGDEPTH_PARS_VERT}
       void main() {
         vUv = uv;
@@ -95,9 +96,15 @@ export function makePlanetMaterial(cfg) {
         // mat3(modelMatrix)=R·S，给 n 预乘 (1,1/s²,1) 即 R·S·S⁻²·n = R·S⁻¹·n；
         // 直接 mat3(modelMatrix)*normal 会把缩放当旋转，扁行星的光照明暗界会错位
         vNormalW = normalize(mat3(modelMatrix) * (normal * uNScale));
-        vec4 wp = modelMatrix * vec4(position, 1.0);
-        vWorldPos = wp.xyz;
-        gl_Position = projectionMatrix * viewMatrix * wp;
+        // 世界坐标只用来求「指向太阳」的方向（normalize 一个大向量，无相消）
+        vWorldPos = (modelMatrix * vec4(position, 1.0)).xyz;
+        // 投影必须走 modelViewMatrix：three 在 CPU 用 double 算好 V·M，平移分量
+        // 已是相机相对小量。在 shader 里连乘 viewMatrix*modelMatrix 会让两个
+        // 10 量级的平移在 float32 下相减，贴近行星时（相机距离 ~1e-4）舍入误差
+        // 被放大成整像素抖动。
+        vec4 mv = modelViewMatrix * vec4(position, 1.0);
+        vViewPos = mv.xyz;
+        gl_Position = projectionMatrix * mv;
         ${LOGDEPTH_VERT}
       }
     `,
@@ -116,6 +123,7 @@ export function makePlanetMaterial(cfg) {
       varying vec3 vPos;
       varying vec3 vNormalW;
       varying vec3 vWorldPos;
+      varying vec3 vViewPos;
 
       ${LOGDEPTH_PARS_FRAG}
       ${NOISE_GLSL}
@@ -183,8 +191,12 @@ export function makePlanetMaterial(cfg) {
         vec3 ambient = col * ambientAmt;
 
         // 边缘光（大气散射感）
-        vec3 V = normalize(cameraPosition - vWorldPos);
-        float fres = pow(1.0 - max(dot(normalize(vNormalW), V), 0.0), 3.0);
+        // 视线在视空间求：cameraPosition 与 vWorldPos 同为 10 量级，相减得到的
+        // ~1e-4 相机距离会被 float32 舍入误差淹没，边缘光随之闪烁。
+        // mat3(viewMatrix) 是纯旋转，把世界法线转过去不损失精度。
+        vec3 Nv = normalize(mat3(viewMatrix) * vNormalW);
+        vec3 V = normalize(-vViewPos);
+        float fres = pow(1.0 - max(dot(Nv, V), 0.0), 3.0);
         vec3 rim = vec3(0.45, 0.62, 1.0) * fres * 0.32 * lightAmt;
 
         vec3 finalCol = col * lightAmt * lightGain + ambient + rim;

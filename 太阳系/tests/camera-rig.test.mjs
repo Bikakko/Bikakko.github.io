@@ -17,7 +17,7 @@ Object.defineProperty(globalThis, "performance", {
 globalThis.innerWidth = 1000;
 globalThis.innerHeight = 1000;
 
-function makeRig() {
+function makeRig(aspect = 1) {
   const win = {}, cvs = {}, doc = {};
   const on = bag => (t, fn) => { (bag[t] ||= []).push(fn); };
   globalThis.addEventListener = on(win);
@@ -29,7 +29,7 @@ function makeRig() {
     addEventListener: on(cvs),
     setPointerCapture() {}, releasePointerCapture() {}, hasPointerCapture: () => false,
   };
-  const camera = new THREE.PerspectiveCamera(48, 1, 0.5, 6000);
+  const camera = new THREE.PerspectiveCamera(48, aspect, 0.5, 6000);
   const planets = PLANETS.map(cfg => {
     const group = new THREE.Object3D();
     orbitalPosition(cfg, 0, group.position);
@@ -170,4 +170,24 @@ test("仰角上限逐帧按本帧距离重夹：近景下方视角拉远后收�
   assert.ok(orbit.dist > 10);
   assert.ok(close(orbit.tPhi, MAX_PHI, 1e-9));
   assert.ok(orbit.tPhi < Math.PI / 2);
+});
+
+/* 面板/iframe 里页面可能在视口布局完成前就跑起来：innerWidth/innerHeight
+   都是 0，aspect = 0/0 = NaN。全景距离由此变成 NaN 后，对数缓动
+   log(max(NaN,1e-9)) 永远回不来，而 resize 只重算 tDist——相机就此永久
+   停在 NaN，整个场景不渲染，光速面板的步长读数也会显示 NaN。 */
+test("视口未布局（aspect=NaN）时全景距离仍有限，resize 后能缓动收敛", () => {
+  const { rig, orbit, camera, step } = makeRig(NaN);
+  assert.ok(Number.isFinite(rig.fitDistance()), `fitDistance=${rig.fitDistance()}`);
+  assert.ok(Number.isFinite(orbit.dist), `初始 dist=${orbit.dist}`);
+  assert.ok(Number.isFinite(orbit.tDist), `初始 tDist=${orbit.tDist}`);
+
+  camera.aspect = 596 / 614;
+  camera.updateProjectionMatrix();
+  rig.onResize();
+  const target = orbit.tDist;
+  assert.ok(Number.isFinite(target));
+  step(240);
+  assert.ok(Number.isFinite(orbit.dist), `缓动后 dist=${orbit.dist}`);
+  assert.ok(close(orbit.dist, target, target * 1e-6), `${orbit.dist} 未收敛到 ${target}`);
 });

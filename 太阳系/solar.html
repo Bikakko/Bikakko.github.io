@@ -185,7 +185,7 @@
     font-size: 22px; letter-spacing: 0.1em; color: #ffd9a0; margin-top: 2px;
     font-variant-numeric: tabular-nums;
   }
-  .light-sub { color: #6b7899; font-size: 10px; margin-bottom: 8px; }
+  .light-sub { color: #7a87a8; font-size: 10px; margin-bottom: 8px; }
   .light-bar {
     position: relative; height: 34px; margin: 4px 0 8px;
     cursor: ew-resize; touch-action: none;
@@ -237,7 +237,7 @@
     color: #ffd9a0; border-color: rgba(255, 200, 120, 0.62);
     background: rgba(48, 36, 18, 0.8);
   }
-  .light-hint { color: #55627f; font-size: 9px; margin-top: 7px; letter-spacing: 0.02em; }
+  .light-hint { color: #6f7c9c; font-size: 10px; margin-top: 7px; letter-spacing: 0.02em; }
   @media (max-width: 560px) {
     .light { left: 12px; right: 12px; bottom: 50px; width: auto; max-width: none; padding: 10px 12px; }
     .light-toggle { left: 12px; bottom: 12px; }
@@ -274,7 +274,7 @@
 <div class="hud" id="hud">
   <div class="brand">SO<span>LAR</span></div>
   <div class="row">时间 <span class="val" id="simtime">—</span></div>
-  <div class="row">时间流速 <span class="val" id="speed">真实时间 1:1</span></div>
+  <div class="row">播放速度 <span class="val" id="speed">真实时间 1:1</span></div>
   <div class="row" id="fpsRow">帧率 <span class="val" id="fps">—</span></div>
   <!-- 全站唯一一套倍率：每真实秒推进多少模拟秒。光波前与天体共用同一个时间 -->
   <div class="ctrl">
@@ -319,7 +319,7 @@
 <button id="lightToggle" class="light-toggle" title="打开/关闭光速可视化（L）">光速 ▸</button>
 
 <div class="light" id="light">
-  <div class="light-title">光速 <span class="light-badge">c 恒定</span></div>
+  <div class="light-title">光速 <span class="light-badge" title="299792.458 km/s">c 恒定</span></div>
   <div class="light-clock" id="lightClock">00:00:00</div>
   <div class="light-sub" id="lightSub">—</div>
   <div class="light-bar" id="lightBar">
@@ -333,8 +333,8 @@
   <div class="light-ctrl">
     <button id="lightReplay">重播</button>
   </div>
-  <div class="light-sub">统一时间流速 <span style="color:#ffd9a0" id="lightRate">—</span> · 光速与天体共用同一个 simTime</div>
-  <div class="light-hint">单一时间轴驱动光波前与天体运行 · 光线每 1 光秒一个亮点 · c 恒为 299792.458 km/s · 拖动标尺定位（不自动暂停） · 空格暂停 / R 重播</div>
+  <div class="light-sub">播放速度 <span style="color:#ffd9a0" id="lightRate">—</span></div>
+  <div class="light-hint">每段 <span style="color:#ffd9a0" id="lightBeadStep">1</span> 光秒 · 拖动标尺定位 · 空格暂停 · R 重播</div>
 </div>
 
 <div class="labels" id="labels"></div>
