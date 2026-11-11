@@ -40,6 +40,7 @@ export function createHud({ onHome, onEpoch }) {
   const fpsEl = document.getElementById("fps");
   const speedEl = document.getElementById("speed");
   const infoEl = document.getElementById("info");
+  const infoWrap = document.getElementById("infoWrap");
   const infoName = document.getElementById("infoName");
   const infoType = document.getElementById("infoType");
   const infoDist = document.getElementById("infoDist");
@@ -47,7 +48,8 @@ export function createHud({ onHome, onEpoch }) {
   const infoPeriod = document.getElementById("infoPeriod");
   const infoMoons = document.getElementById("infoMoons");
   const infoInc = document.getElementById("infoInc");
-  const nowBtn = document.querySelector(".ctrl button[data-now]");
+  const nowBtn = document.getElementById("tpNow");
+  const nowStateEl = document.getElementById("tpNowState");
 
   const rateLabel = () => RATE_LABELS[rateSec] || `${rateSec} 秒/秒`;
   const utcMs = () => ttDaysToUtcMs(simTime);
@@ -66,9 +68,11 @@ export function createHud({ onHome, onEpoch }) {
       : "无";
     infoInc.textContent = cfg.incLabel || `${Math.abs(cfg.incDeg).toFixed(3)}°`;
     infoEl.classList.add("on");
+    infoWrap.classList.add("on");
   }
   function hideInfo() {
     infoEl.classList.remove("on");
+    infoWrap.classList.remove("on");
   }
 
   /* ---------- 时间流速 / 暂停 ---------- */
@@ -80,7 +84,8 @@ export function createHud({ onHome, onEpoch }) {
       const bv = parseFloat(b.dataset.rate);
       b.classList.toggle("on", bv === 0 ? paused : (!paused && bv === rateSec));
     }
-    if (nowBtn) nowBtn.classList.toggle("on", live);
+    nowBtn.classList.toggle("on", live);
+    nowStateEl.textContent = live ? "实时跟随" : "未跟随";
   }
   function applySpeed(v) {
     if (v === 0) {
@@ -101,15 +106,13 @@ export function createHud({ onHome, onEpoch }) {
         onHome();
         return;
       }
-      if (b.dataset.now !== undefined) {
-        setNow();
-        return;
-      }
-      // 时间面板开关等非倍率按钮由 time-panel 自己接管
       if (b.dataset.rate === undefined) return;
       applySpeed(parseFloat(b.dataset.rate));
     });
   });
+
+  // 「现在」在时间抽屉里：点一下回到本机时钟并恢复实时跟随
+  nowBtn.addEventListener("click", (e) => { e.stopPropagation(); setNow(); });
 
   addEventListener("keydown", (e) => {
     // 不劫持聚焦在按钮/标签/表单上的空格与方向键，保证键盘可达性

@@ -136,7 +136,7 @@ export function createTimePanel({ hud, onOpen }) {
   /* ---------- 开合 ---------- */
   let panelOpen = false;
   function setPanelOpen(next) {
-    // 与左下角光速面板共用左侧空间，矮屏上会叠在一起：同时只开一个
+    // 矮屏上两个抽屉会挤在一起：右上角时间抽屉与左下角光速面板同时只开一个
     if (next && onOpen) onOpen();
     panelOpen = next;
     panel.classList.toggle("on", next);
@@ -169,6 +169,9 @@ export function createTimePanel({ hud, onOpen }) {
     moreBtn.setAttribute("aria-expanded", String(planetsOpen));
     if (planetsOpen) refresh();
   });
+
+  // 「现在」由 hud 推进时间轴，这里只把面板读数立刻跟上，不等 4Hz 轮询
+  $("tpNow").addEventListener("click", (e) => { e.stopPropagation(); refresh(); });
 
   /* ---------- 输入时间 ---------- */
   function jumpToMs(ms) {

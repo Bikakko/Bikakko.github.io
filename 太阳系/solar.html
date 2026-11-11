@@ -13,7 +13,13 @@
     -webkit-user-select: none; user-select: none;
   }
   html.dragging, html.dragging body { cursor: grabbing; }
-  :root { --light-drawer-h: 268px; }
+  /* 光速抽屉高度钉死，右侧卡片列据此让位，不用猜内容尺寸。
+     矮屏先压缩抽屉（它自己会滚）：250 = 左上 HUD 约 150 高 + 把手与空隙，
+     保证抽屉不会盖住 HUD，右列也始终放得下把手与状态卡 */
+  :root {
+    --light-drawer-h: min(268px, calc(100vh - 250px));
+    --light-drawer-h: min(268px, calc(100dvh - 250px));
+  }
 
   #c {
     display: block; position: fixed; inset: 0;
@@ -72,29 +78,78 @@
   }
   .tip.open .tip-body { display: block; }
 
-  /* 右侧卡片列：状态卡常驻在上，天体信息卡聚焦时出现在下方，互不遮挡。
-     上下都锚死，列高由视口决定：信息卡保持原高，状态卡收缩并自己滚动，
-     所以行星表展开再长也不会把整列顶出屏幕 */
+  /* 右侧抽屉列：时间把手常驻在最上，展开的时间面板、地球状态卡、
+     聚焦时出现的天体信息卡依次往下排。上下都锚死，列高由视口决定：
+     卡片各自收缩并自己滚动，所以行星表展开再长也不会把整列顶出屏幕。
+     下边距留给右下角「操作说明」把手（20 边距 + 28 把手 + 10 空隙） */
   .right {
-    position: fixed; right: 22px; top: 20px; bottom: 20px; z-index: 4;
+    position: fixed; right: 22px; top: 20px; bottom: 58px; z-index: 4;
+    width: 216px;
     display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
     pointer-events: none;
   }
 
-  /* 天体信息卡 */
-  .info {
+  /* 时间抽屉把手：与左下角「光速」把手同一造型，一左一右对角呼应 */
+  .drawer-toggle {
     flex: none;
-    min-width: 178px; padding: 12px 15px;
-    border: 1px solid rgba(120, 150, 200, 0.22);
+    font: inherit; font-size: 10px; letter-spacing: 0.08em;
+    padding: 4px 10px;
+    color: #8e9cbe; background: rgba(10, 16, 28, 0.72);
+    border: 1px solid rgba(110, 140, 195, 0.24); border-radius: 5px;
+    cursor: pointer; pointer-events: auto;
+    transition: color 0.18s, border-color 0.18s, background 0.18s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .drawer-toggle:hover, .drawer-toggle.on {
+    color: #ffd9a0; border-color: rgba(255, 200, 120, 0.62);
+    background: rgba(48, 36, 18, 0.8);
+  }
+  .drawer-toggle:focus-visible {
+    outline: 1px solid rgba(255, 210, 140, 0.8); outline-offset: 1px;
+  }
+
+  /* 所有会滚动的卡片共用一套滚动条，取 HUD 的琥珀强调色 */
+  .state-body, .tp, .light, .info {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 200, 120, 0.4) rgba(120, 150, 200, 0.1);
+  }
+  .state-body::-webkit-scrollbar, .tp::-webkit-scrollbar,
+  .light::-webkit-scrollbar, .info::-webkit-scrollbar { width: 6px; }
+  .state-body::-webkit-scrollbar-track, .tp::-webkit-scrollbar-track,
+  .light::-webkit-scrollbar-track, .info::-webkit-scrollbar-track {
+    background: rgba(120, 150, 200, 0.1); border-radius: 3px;
+  }
+  .state-body::-webkit-scrollbar-thumb, .tp::-webkit-scrollbar-thumb,
+  .light::-webkit-scrollbar-thumb, .info::-webkit-scrollbar-thumb {
+    background: rgba(255, 200, 120, 0.4); border-radius: 3px;
+  }
+  .state-body::-webkit-scrollbar-thumb:hover, .tp::-webkit-scrollbar-thumb:hover,
+  .light::-webkit-scrollbar-thumb:hover, .info::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 200, 120, 0.7);
+  }
+
+  /* 天体信息卡：未聚焦时整格收成 0 高，不再白占列高把状态卡挤扁。
+     高度是 auto，只有 grid-template-rows 0fr→1fr 能把它过渡出来 */
+  .info-wrap {
+    flex: 0 1 auto; min-height: 0; width: 100%;
+    display: grid; grid-template-rows: 0fr;
+    transition: grid-template-rows 0.35s ease;
+  }
+  .info-wrap.on { grid-template-rows: 1fr; }
+  /* 竖向 padding 与上下边框也要一起收：否则 0fr的行仍会留下 26px 的空卡 */
+  .info {
+    min-height: 0; overflow-y: auto;
+    padding: 0 15px;
+    border: 0 solid rgba(120, 150, 200, 0.22); border-width: 0 1px;
     border-radius: 9px;
     background: rgba(8, 12, 22, 0.72);
     -webkit-backdrop-filter: blur(9px);
     backdrop-filter: blur(9px);
     color: #c9d6ec; font-size: 11px; line-height: 1.85;
-    opacity: 0; transition: opacity 0.35s ease;
-    pointer-events: none;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.35s ease, padding 0.35s ease, border-width 0.35s ease;
   }
-  .info.on { opacity: 1; }
+  .info.on { opacity: 1; padding: 12px 15px; border-width: 1px; }
   .info h3 {
     font-size: 14px; font-weight: 600; color: #fff;
     letter-spacing: 0.1em; margin-bottom: 6px;
@@ -104,8 +159,9 @@
 
   /* 地球状态卡 */
   .state {
-    width: 216px; padding: 9px 13px 10px;
-    flex: 0 1 auto; min-height: 0; overflow: hidden;
+    width: 100%; padding: 9px 13px 10px;
+    /* 抽屉展开时先让状态卡收缩：把手与时间字段要保持可用 */
+    flex: 0 3 auto; min-height: 0; overflow: hidden;
     display: flex; flex-direction: column;
     border: 1px solid rgba(120, 150, 200, 0.22); border-radius: 9px;
     background: rgba(8, 12, 22, 0.78);
@@ -127,12 +183,8 @@
   .state-body {
     display: none; margin-top: 6px;
     min-height: 0; overflow-y: auto;
-    scrollbar-width: thin; scrollbar-color: rgba(255, 200, 120, 0.4) rgba(120, 150, 200, 0.1);
   }
-  .state-body::-webkit-scrollbar { width: 6px; }
-  .state-body::-webkit-scrollbar-track { background: rgba(120, 150, 200, 0.1); border-radius: 3px; }
-  .state-body::-webkit-scrollbar-thumb { background: rgba(255, 200, 120, 0.4); border-radius: 3px; }
-  .state-body::-webkit-scrollbar-thumb:hover { background: rgba(255, 200, 120, 0.7); }
+  .state.open { min-height: 84px; }
   .state.open .state-body { display: block; }
   .state .k { width: 46px; }
   .state .k2 { width: 34px; margin-left: 6px; }
@@ -196,10 +248,11 @@
     .ctrl button { min-width: 34px; padding: 6px 7px; font-size: 10px; }
   }
 
-  /* 时间面板：挂在 HUD 下方，随流速按钮一起流动，不用写死偏移 */
+  /* 时间抽屉：挂在右上角把手下方，与状态卡同宽同列 */
   .tp {
-    display: none; margin-top: 9px;
-    width: 268px; max-width: calc(100vw - 44px);
+    display: none;
+    width: 100%;
+    flex: 0 1 auto; min-height: 96px; overflow-y: auto;
     padding: 10px 12px 9px;
     border: 1px solid rgba(120, 150, 200, 0.22); border-radius: 9px;
     background: rgba(8, 12, 22, 0.86);
@@ -217,6 +270,19 @@
     -webkit-tap-highlight-color: transparent;
   }
   .tp button:hover { color: #ffd9a0; border-color: rgba(255, 200, 120, 0.62); }
+  .tp button:focus-visible { outline: 1px solid rgba(255, 210, 140, 0.8); outline-offset: 1px; }
+  /* 「现在」是抽屉里的第一个动作：左侧命令、右侧当前是否跟着本机时钟 */
+  .tp .tp-now {
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; gap: 8px; padding: 5px 9px; letter-spacing: 0.05em;
+  }
+  .tp .tp-now em { font-style: normal; font-size: 9px; color: #6f7c9c; }
+  .tp .tp-now.on {
+    color: #ffd9a0; border-color: rgba(255, 200, 120, 0.62);
+    background: rgba(48, 36, 18, 0.8);
+  }
+  .tp .tp-now.on em { color: #c9a26a; }
+  .tp-sep { height: 1px; margin: 9px 0; background: rgba(120, 150, 200, 0.18); }
   #tpMinus, #tpPlus { flex: none; min-width: 28px; }
   #tpUnit { flex: none; width: 56px; }
   #tpCopy { width: 100%; }
@@ -272,7 +338,6 @@
     position: fixed; left: 22px; bottom: 54px; z-index: 5;
     width: 340px; max-width: calc(100vw - 44px);
     max-height: var(--light-drawer-h); overflow-y: auto;
-    scrollbar-width: thin; scrollbar-color: rgba(255, 200, 120, 0.4) rgba(120, 150, 200, 0.1);
     padding: 12px 14px 11px;
     border: 1px solid rgba(120, 150, 200, 0.22); border-radius: 9px;
     background: rgba(8, 12, 22, 0.82);
@@ -282,10 +347,6 @@
     transition: opacity 0.3s ease, transform 0.3s ease;
   }
   .light.on { opacity: 1; transform: none; pointer-events: auto; }
-  .light::-webkit-scrollbar { width: 6px; }
-  .light::-webkit-scrollbar-track { background: rgba(120, 150, 200, 0.1); border-radius: 3px; }
-  .light::-webkit-scrollbar-thumb { background: rgba(255, 200, 120, 0.4); border-radius: 3px; }
-  .light::-webkit-scrollbar-thumb:hover { background: rgba(255, 200, 120, 0.7); }
   /* 面板右缘 22+340=362，状态卡左缘 100vw-238：视口窄于 600px 就会碰上。
      抽屉高度已被 --light-drawer-h 钉死，右列据此让位，不用猜内容尺寸。
      66 = 抽屉离底 54 + 与卡片列留 12 空隙 */
@@ -356,6 +417,12 @@
   }
   .light-hint { color: #6f7c9c; font-size: 10px; margin-top: 7px; letter-spacing: 0.02em; }
   @media (max-width: 560px) {
+    /* 小屏 HUD 的倍率按钮会折成四行（约 230 高）：抽屉再压一档才盖不到它。
+       310 = HUD 约 230 + 把手与空隙 */
+    :root {
+      --light-drawer-h: min(268px, calc(100vh - 310px));
+      --light-drawer-h: min(268px, calc(100dvh - 310px));
+    }
     /* 小屏上光速面板是通栏底部抽屉，必然横穿右侧卡片列 */
     .light { left: 12px; right: 12px; bottom: 50px; width: auto; max-width: none; padding: 10px 12px; }
     .light-toggle { left: 12px; bottom: 12px; }
@@ -372,7 +439,8 @@
   }
   .loader.done { opacity: 0; pointer-events: none; }
 
-  .static .hud, .static .tip, .static .info, .static .lbl, .static .loader {
+  .static .hud, .static .tip, .static .info, .static .info-wrap,
+  .static .lbl, .static .loader {
     transition: none !important;
   }
   .static #fpsRow { display: none; }
@@ -382,20 +450,25 @@
     .hud { left: 14px; top: 12px; font-size: 11px; }
     .hud .brand { font-size: 14px; }
     .tip { right: 12px; bottom: 12px; font-size: 10px; }
-    .right { right: 12px; top: 12px; bottom: 12px; gap: 8px; }
-    .info { min-width: 150px; font-size: 10px; }
-    .state { width: 164px; padding: 7px 10px 8px; font-size: 10px; }
+    .right { right: 12px; top: 12px; bottom: 48px; width: 164px; gap: 8px; }
+    .info { font-size: 10px; }
+    .info .k { width: 46px; }
+    .state { padding: 7px 10px 8px; font-size: 10px; }
     .state-head { font-size: 11px; }
     .state .k { width: 40px; }
     .state .k2 { width: 30px; margin-left: 4px; }
-    /* 与 .ctrl 同宽：右边缘停在状态卡左侧，不能伸到卡片底下。
-       字段窄了就把标签换行到控件上方，日期/儒略日才不会被截断 */
-    .tp { width: auto; max-width: calc(100vw - 200px); }
+    /* 字段窄了就把标签换行到控件上方，日期/儒略日才不会被截断 */
+    .tp { padding: 8px 10px; }
     .tp-row { flex-wrap: wrap; }
     .tp-k { width: 100%; }
-    /* 时钟换成短串：整串会与右侧状态卡叠在一起 */
+    /* 时钟换成短串：整串会与右侧抽屉列叠在一起 */
     #simFull { display: none; }
     #simShort { display: inline; }
+  }
+  /* 320px 宽的机器上，11px 的时钟行会把 HUD 顶到卡片列底下：再收一号字 */
+  @media (max-width: 360px) {
+    .hud { font-size: 10px; }
+    .info .k { width: 42px; }
   }
 </style>
 </head>
@@ -411,7 +484,6 @@
   <div class="row" id="fpsRow">帧率 <span class="val" id="fps">—</span></div>
   <!-- 全站唯一一套倍率：每真实秒推进多少模拟秒。光波前与天体共用同一个时间 -->
   <div class="ctrl">
-    <button data-now title="回到当前真实时间，并实时跟随">现在</button>
     <button data-rate="0" title="暂停 / 继续">❚❚</button>
     <button data-rate="1" title="真实时间 1 秒 : 1 秒">1:1</button>
     <button data-rate="60" title="每真实秒推进 1 分钟">1m</button>
@@ -422,10 +494,18 @@
     <button data-rate="604800" title="每真实秒推进 7 天">7d</button>
     <button data-rate="2592000" title="每真实秒推进 30 天">30d</button>
     <button data-home title="回到远景全景">全景</button>
-    <button data-time id="timeToggle" title="输入时间 / 时区 / 步进" aria-expanded="false">时间 ▸</button>
   </div>
+</div>
+
+<div class="right" id="right">
+  <button id="timeToggle" class="drawer-toggle" type="button"
+          aria-expanded="false" aria-controls="tp" title="回到现在 / 输入时间 / 时区 / 步进">时间 ▸</button>
 
   <div class="tp" id="tp">
+    <button type="button" id="tpNow" class="tp-now" title="回到本机当前时间，并实时跟随">
+      <span>现在</span><em id="tpNowState">实时跟随</em>
+    </button>
+    <div class="tp-sep"></div>
     <div class="tp-row">
       <input type="datetime-local" id="tpInput" step="1" aria-label="日期与时间">
     </div>
@@ -455,9 +535,7 @@
     </div>
     <div class="tp-note" id="tpNote">—</div>
   </div>
-</div>
 
-<div class="right" id="right">
   <div class="state open" id="state">
     <button class="state-head" id="stateToggle" type="button" aria-expanded="true">
       <span id="stateTitle">地球</span><span class="state-caret" id="stateCaret">▾</span>
@@ -480,14 +558,16 @@
     </div>
   </div>
 
-  <div class="info" id="info">
-    <h3 id="infoName">—</h3>
-    <div><span class="k">类型</span><span class="v" id="infoType">—</span></div>
-    <div><span class="k">半长轴</span><span class="v" id="infoDist">—</span></div>
-    <div><span class="k">偏心率</span><span class="v" id="infoEcc">—</span></div>
-    <div><span class="k">周期</span><span class="v" id="infoPeriod">—</span></div>
-    <div><span class="k">卫星</span><span class="v" id="infoMoons">—</span></div>
-    <div><span class="k">轨道倾角</span><span class="v" id="infoInc">—</span></div>
+  <div class="info-wrap" id="infoWrap">
+    <div class="info" id="info">
+      <h3 id="infoName">—</h3>
+      <div><span class="k">类型</span><span class="v" id="infoType">—</span></div>
+      <div><span class="k">半长轴</span><span class="v" id="infoDist">—</span></div>
+      <div><span class="k">偏心率</span><span class="v" id="infoEcc">—</span></div>
+      <div><span class="k">周期</span><span class="v" id="infoPeriod">—</span></div>
+      <div><span class="k">卫星</span><span class="v" id="infoMoons">—</span></div>
+      <div><span class="k">轨道倾角</span><span class="v" id="infoInc">—</span></div>
+    </div>
   </div>
 </div>
 
@@ -502,6 +582,7 @@
     <div><b>点击天体 / 标签</b> 聚焦</div>
     <div><b>Esc / 点空白 / 滚轮拉远</b> 取消聚焦</div>
     <div><b>双击空白 / 全景</b> 回到远景</div>
+    <div><b>时间 ▸</b> 回到现在 / 输入时间 / 时区</div>
     <div><b>L</b> 光速可视化</div>
   </div>
 </div>
