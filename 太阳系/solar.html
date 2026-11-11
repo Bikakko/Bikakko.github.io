@@ -13,6 +13,7 @@
     -webkit-user-select: none; user-select: none;
   }
   html.dragging, html.dragging body { cursor: grabbing; }
+  :root { --light-drawer-h: 268px; }
 
   #c {
     display: block; position: fixed; inset: 0;
@@ -43,6 +44,7 @@
   .hud .brand span { color: #ffd27f; }
   .hud .row { color: #8794b5; }
   .hud .val { color: #ffd9a0; }
+  #simShort { display: none; }
 
   .tip {
     position: fixed; right: 22px; bottom: 20px; z-index: 3;
@@ -70,9 +72,18 @@
   }
   .tip.open .tip-body { display: block; }
 
+  /* 右侧卡片列：状态卡常驻在上，天体信息卡聚焦时出现在下方，互不遮挡。
+     上下都锚死，列高由视口决定：信息卡保持原高，状态卡收缩并自己滚动，
+     所以行星表展开再长也不会把整列顶出屏幕 */
+  .right {
+    position: fixed; right: 22px; top: 20px; bottom: 20px; z-index: 4;
+    display: flex; flex-direction: column; align-items: flex-end; gap: 10px;
+    pointer-events: none;
+  }
+
   /* 天体信息卡 */
   .info {
-    position: fixed; right: 22px; top: 20px; z-index: 4;
+    flex: none;
     min-width: 178px; padding: 12px 15px;
     border: 1px solid rgba(120, 150, 200, 0.22);
     border-radius: 9px;
@@ -88,12 +99,79 @@
     font-size: 14px; font-weight: 600; color: #fff;
     letter-spacing: 0.1em; margin-bottom: 6px;
   }
-  .info .k { color: #6d7c9e; display: inline-block; width: 52px; }
-  .info .v { color: #ffd9a0; }
+  .info .k, .state .k { color: #6d7c9e; display: inline-block; width: 52px; }
+  .info .v, .state .v { color: #ffd9a0; }
+
+  /* 地球状态卡 */
+  .state {
+    width: 216px; padding: 9px 13px 10px;
+    flex: 0 1 auto; min-height: 0; overflow: hidden;
+    display: flex; flex-direction: column;
+    border: 1px solid rgba(120, 150, 200, 0.22); border-radius: 9px;
+    background: rgba(8, 12, 22, 0.78);
+    -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+    color: #c9d6ec; font-size: 11px; line-height: 1.85;
+    pointer-events: auto;
+  }
+  .state-head {
+    flex: none;
+    display: flex; align-items: center; justify-content: space-between;
+    width: 100%; gap: 8px; padding: 0; margin: 0;
+    font: inherit; font-size: 12px; letter-spacing: 0.08em;
+    color: #fff; background: none; border: 0; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .state-head:hover { color: #ffd9a0; }
+  .state-caret { color: #8e9cbe; font-size: 10px; }
+  /* 只有卡身滚动：标题（收起按钮）始终留在原位，不会被自己的内容滚走 */
+  .state-body {
+    display: none; margin-top: 6px;
+    min-height: 0; overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: rgba(255, 200, 120, 0.4) rgba(120, 150, 200, 0.1);
+  }
+  .state-body::-webkit-scrollbar { width: 6px; }
+  .state-body::-webkit-scrollbar-track { background: rgba(120, 150, 200, 0.1); border-radius: 3px; }
+  .state-body::-webkit-scrollbar-thumb { background: rgba(255, 200, 120, 0.4); border-radius: 3px; }
+  .state-body::-webkit-scrollbar-thumb:hover { background: rgba(255, 200, 120, 0.7); }
+  .state.open .state-body { display: block; }
+  .state .k { width: 46px; }
+  .state .k2 { width: 34px; margin-left: 6px; }
+  .state select, .state input, .tp select, .tp input {
+    font: inherit; font-size: 10px; color: #ffd9a0;
+    background: rgba(10, 16, 28, 0.9);
+    border: 1px solid rgba(110, 140, 195, 0.28); border-radius: 5px;
+    padding: 3px 5px; min-width: 0;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .state select:focus-visible, .state input:focus-visible,
+  .tp select:focus-visible, .tp input:focus-visible,
+  .state-head:focus-visible, .st-more:focus-visible {
+    outline: 1px solid rgba(255, 210, 140, 0.8); outline-offset: 1px;
+  }
+  .st-row { display: flex; gap: 5px; margin-bottom: 5px; }
+  .st-row select { flex: 1; }
+  .st-custom { display: none; }
+  .st-custom.on { display: flex; }
+  .st-custom input { flex: 1; }
+  .st-more {
+    font: inherit; font-size: 10px; letter-spacing: 0.05em;
+    margin-top: 5px; padding: 2px 0;
+    color: #8e9cbe; background: none; border: 0; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .st-more:hover { color: #ffd9a0; }
+  .st-planets { display: none; margin-top: 2px; }
+  .st-planets.on { display: block; }
+  .st-planets > div { display: flex; gap: 6px; }
+  .st-planets .pn { color: #8794b5; width: 52px; }
+  .st-planets .v { flex: 1; text-align: right; }
 
   /* 调速按钮 */
   .ctrl {
-    display: flex; gap: 4px; margin-top: 11px;
+    display: flex; flex-wrap: wrap; gap: 4px; margin-top: 11px;
+    /* 右侧卡片列占 216 + 22 边距，再留 12 空隙：HUD 不能伸到卡片底下，
+       否则最后几个按钮会被状态卡盖住点不到 */
+    max-width: min(460px, calc(100vw - 272px));
     pointer-events: auto;
   }
   .ctrl button {
@@ -114,9 +192,36 @@
     background: rgba(48, 36, 18, 0.8);
   }
   @media (max-width: 560px) {
-    .ctrl { flex-wrap: wrap; gap: 5px; max-width: 168px; }
+    .ctrl { gap: 5px; max-width: calc(100vw - 200px); }
     .ctrl button { min-width: 34px; padding: 6px 7px; font-size: 10px; }
   }
+
+  /* 时间面板：挂在 HUD 下方，随流速按钮一起流动，不用写死偏移 */
+  .tp {
+    display: none; margin-top: 9px;
+    width: 268px; max-width: calc(100vw - 44px);
+    padding: 10px 12px 9px;
+    border: 1px solid rgba(120, 150, 200, 0.22); border-radius: 9px;
+    background: rgba(8, 12, 22, 0.86);
+    -webkit-backdrop-filter: blur(9px); backdrop-filter: blur(9px);
+    pointer-events: auto; line-height: 1.7;
+  }
+  .tp.on { display: block; }
+  .tp-row { display: flex; align-items: center; gap: 5px; margin-bottom: 5px; }
+  .tp-row input, .tp-row select { flex: 1; }
+  .tp-k { color: #6d7c9e; font-size: 10px; width: 40px; flex: none; }
+  .tp button {
+    font: inherit; font-size: 10px; padding: 3px 8px;
+    color: #8e9cbe; background: rgba(10, 16, 28, 0.72);
+    border: 1px solid rgba(110, 140, 195, 0.24); border-radius: 5px; cursor: pointer;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .tp button:hover { color: #ffd9a0; border-color: rgba(255, 200, 120, 0.62); }
+  #tpMinus, #tpPlus { flex: none; min-width: 28px; }
+  #tpUnit { flex: none; width: 56px; }
+  #tpCopy { width: 100%; }
+  .tp-note { color: #6f7c9c; font-size: 9px; letter-spacing: 0.02em; }
+  .tp-note.warn { color: #ffb454; }
 
   /* 行星名称标签：跟着球心投影到屏幕 */
   .labels { position: fixed; inset: 0; z-index: 2; pointer-events: none; }
@@ -166,6 +271,8 @@
   .light {
     position: fixed; left: 22px; bottom: 54px; z-index: 5;
     width: 340px; max-width: calc(100vw - 44px);
+    max-height: var(--light-drawer-h); overflow-y: auto;
+    scrollbar-width: thin; scrollbar-color: rgba(255, 200, 120, 0.4) rgba(120, 150, 200, 0.1);
     padding: 12px 14px 11px;
     border: 1px solid rgba(120, 150, 200, 0.22); border-radius: 9px;
     background: rgba(8, 12, 22, 0.82);
@@ -175,6 +282,16 @@
     transition: opacity 0.3s ease, transform 0.3s ease;
   }
   .light.on { opacity: 1; transform: none; pointer-events: auto; }
+  .light::-webkit-scrollbar { width: 6px; }
+  .light::-webkit-scrollbar-track { background: rgba(120, 150, 200, 0.1); border-radius: 3px; }
+  .light::-webkit-scrollbar-thumb { background: rgba(255, 200, 120, 0.4); border-radius: 3px; }
+  .light::-webkit-scrollbar-thumb:hover { background: rgba(255, 200, 120, 0.7); }
+  /* 面板右缘 22+340=362，状态卡左缘 100vw-238：视口窄于 600px 就会碰上。
+     抽屉高度已被 --light-drawer-h 钉死，右列据此让位，不用猜内容尺寸。
+     66 = 抽屉离底 54 + 与卡片列留 12 空隙 */
+  @media (min-width: 561px) and (max-width: 600px) {
+    body:has(.light.on) .right { bottom: calc(var(--light-drawer-h) + 66px); }
+  }
   .static .light { transition: none !important; transform: none; }
   .light-title { font-size: 12px; letter-spacing: 0.16em; color: #fff; }
   .light-badge {
@@ -239,8 +356,11 @@
   }
   .light-hint { color: #6f7c9c; font-size: 10px; margin-top: 7px; letter-spacing: 0.02em; }
   @media (max-width: 560px) {
+    /* 小屏上光速面板是通栏底部抽屉，必然横穿右侧卡片列 */
     .light { left: 12px; right: 12px; bottom: 50px; width: auto; max-width: none; padding: 10px 12px; }
     .light-toggle { left: 12px; bottom: 12px; }
+    /* 62 = 抽屉离底 50 + 与卡片列留 12 空隙 */
+    body:has(.light.on) .right { bottom: calc(var(--light-drawer-h) + 62px); }
   }
 
   .loader {
@@ -262,7 +382,20 @@
     .hud { left: 14px; top: 12px; font-size: 11px; }
     .hud .brand { font-size: 14px; }
     .tip { right: 12px; bottom: 12px; font-size: 10px; }
-    .info { right: 12px; top: 12px; min-width: 150px; font-size: 10px; }
+    .right { right: 12px; top: 12px; bottom: 12px; gap: 8px; }
+    .info { min-width: 150px; font-size: 10px; }
+    .state { width: 164px; padding: 7px 10px 8px; font-size: 10px; }
+    .state-head { font-size: 11px; }
+    .state .k { width: 40px; }
+    .state .k2 { width: 30px; margin-left: 4px; }
+    /* 与 .ctrl 同宽：右边缘停在状态卡左侧，不能伸到卡片底下。
+       字段窄了就把标签换行到控件上方，日期/儒略日才不会被截断 */
+    .tp { width: auto; max-width: calc(100vw - 200px); }
+    .tp-row { flex-wrap: wrap; }
+    .tp-k { width: 100%; }
+    /* 时钟换成短串：整串会与右侧状态卡叠在一起 */
+    #simFull { display: none; }
+    #simShort { display: inline; }
   }
 </style>
 </head>
@@ -273,11 +406,12 @@
 
 <div class="hud" id="hud">
   <div class="brand">SO<span>LAR</span></div>
-  <div class="row">时间 <span class="val" id="simtime">—</span></div>
-  <div class="row">播放速度 <span class="val" id="speed">真实时间 1:1</span></div>
+  <div class="row">时间 <span class="val" id="simtime"><span id="simFull">—</span><span id="simShort">—</span></span></div>
+  <div class="row">播放速度 <span class="val" id="speed">实时跟随</span></div>
   <div class="row" id="fpsRow">帧率 <span class="val" id="fps">—</span></div>
   <!-- 全站唯一一套倍率：每真实秒推进多少模拟秒。光波前与天体共用同一个时间 -->
   <div class="ctrl">
+    <button data-now title="回到当前真实时间，并实时跟随">现在</button>
     <button data-rate="0" title="暂停 / 继续">❚❚</button>
     <button data-rate="1" title="真实时间 1 秒 : 1 秒">1:1</button>
     <button data-rate="60" title="每真实秒推进 1 分钟">1m</button>
@@ -288,17 +422,73 @@
     <button data-rate="604800" title="每真实秒推进 7 天">7d</button>
     <button data-rate="2592000" title="每真实秒推进 30 天">30d</button>
     <button data-home title="回到远景全景">全景</button>
+    <button data-time id="timeToggle" title="输入时间 / 时区 / 步进" aria-expanded="false">时间 ▸</button>
+  </div>
+
+  <div class="tp" id="tp">
+    <div class="tp-row">
+      <input type="datetime-local" id="tpInput" step="1" aria-label="日期与时间">
+    </div>
+    <div class="tp-row">
+      <span class="tp-k">时区</span>
+      <select id="tpZone" aria-label="时区"></select>
+    </div>
+    <div class="tp-row">
+      <span class="tp-k">步进</span>
+      <select id="tpUnit" aria-label="步进单位">
+        <option value="year">年</option>
+        <option value="month">月</option>
+        <option value="day" selected>日</option>
+        <option value="hour">时</option>
+        <option value="minute">分</option>
+        <option value="second">秒</option>
+      </select>
+      <button type="button" id="tpMinus" title="后退一步">−</button>
+      <button type="button" id="tpPlus" title="前进一步">+</button>
+    </div>
+    <div class="tp-row">
+      <span class="tp-k">儒略日</span>
+      <input type="number" id="tpJD" step="0.000001" aria-label="儒略日（TT）">
+    </div>
+    <div class="tp-row">
+      <button type="button" id="tpCopy">复制状态链接</button>
+    </div>
+    <div class="tp-note" id="tpNote">—</div>
   </div>
 </div>
 
-<div class="info" id="info">
-  <h3 id="infoName">—</h3>
-  <div><span class="k">类型</span><span class="v" id="infoType">—</span></div>
-  <div><span class="k">半长轴</span><span class="v" id="infoDist">—</span></div>
-  <div><span class="k">偏心率</span><span class="v" id="infoEcc">—</span></div>
-  <div><span class="k">周期</span><span class="v" id="infoPeriod">—</span></div>
-  <div><span class="k">卫星</span><span class="v" id="infoMoons">—</span></div>
-  <div><span class="k">轨道倾角</span><span class="v" id="infoInc">—</span></div>
+<div class="right" id="right">
+  <div class="state open" id="state">
+    <button class="state-head" id="stateToggle" type="button" aria-expanded="true">
+      <span id="stateTitle">地球</span><span class="state-caret" id="stateCaret">▾</span>
+    </button>
+    <div class="state-body" id="stateBody">
+      <div class="st-row"><select id="stPlace" aria-label="观测地"></select></div>
+      <div class="st-row st-custom" id="stCustom">
+        <input type="number" id="stLat" step="0.0001" min="-90" max="90" aria-label="纬度（北纬为正）">
+        <input type="number" id="stLon" step="0.0001" min="-180" max="180" aria-label="经度（东经为正）">
+      </div>
+      <div><span class="k">季节</span><span class="v" id="stSeason">—</span></div>
+      <div><span class="k">直射点</span><span class="v" id="stSubsolar">—</span></div>
+      <div><span class="k">太阳</span><span class="v" id="stSun">—</span></div>
+      <div><span class="k">日出</span><span class="v" id="stRise">—</span><span class="k k2">日落</span><span class="v" id="stSet">—</span></div>
+      <div><span class="k">昼长</span><span class="v" id="stLen">—</span></div>
+      <div><span class="k">太阳时</span><span class="v" id="stSolar">—</span></div>
+      <div><span class="k">月相</span><span class="v" id="stMoon">—</span></div>
+      <button class="st-more" id="stMore" type="button" aria-expanded="false">行星位置 ▸</button>
+      <div class="st-planets" id="stPlanets"></div>
+    </div>
+  </div>
+
+  <div class="info" id="info">
+    <h3 id="infoName">—</h3>
+    <div><span class="k">类型</span><span class="v" id="infoType">—</span></div>
+    <div><span class="k">半长轴</span><span class="v" id="infoDist">—</span></div>
+    <div><span class="k">偏心率</span><span class="v" id="infoEcc">—</span></div>
+    <div><span class="k">周期</span><span class="v" id="infoPeriod">—</span></div>
+    <div><span class="k">卫星</span><span class="v" id="infoMoons">—</span></div>
+    <div><span class="k">轨道倾角</span><span class="v" id="infoInc">—</span></div>
+  </div>
 </div>
 
 <div class="tip" id="tip">

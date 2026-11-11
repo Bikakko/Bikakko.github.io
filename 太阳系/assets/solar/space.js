@@ -239,33 +239,38 @@ function buildCorona(radius, opacity, color, sunUniforms) {
 /* ============================================================
    3. 轨道线
    ============================================================ */
-function makeOrbitLine(cfg) {
-  // 折线弦高 ≈ r·θ²/8：256 段时海王星偏差约 0.023 单位（半径的 14 倍），
-  // 贴近观察会明显脱离行星实际位置；8192 段降到半径的 ~1%，肉眼不可见
-  const SEG = 8192;
-  const pts = [];
+// 折线弦高 ≈ r·θ²/8：256 段时海王星偏差约 0.023 单位（半径的 14 倍），
+// 贴近观察会明显脱离行星实际位置；8192 段降到半径的 ~1%，肉眼不可见
+const ORBIT_SEG = 8192;
+
+// 就地重写顶点，不新建几何/材质：跳到别的历元时只更新数据
+function fillOrbitPoints(cfg, days, attr) {
+  const arr = attr.array;
   const v = new THREE.Vector3();
-  const T = qT / 36525;
-
-  if ((cfg.satellites || []).length > 0) {
-    // 有卫星的天体（地球）：按时间采样「含地月质心摆动」的真实轨迹，
-    // 而不是把整条质心椭圆按瞬时偏移平移——后者只保证当下穿过本体，
-    // 椭圆其余部分并不等于地球路径。从 ?t= 历元起采一个公转周期，
-    // 静态截图与本体位置严格对齐；播放中摆动相位虽会缓慢错开，
-    // 但幅度恒小于地球半径，不影响判读。
-    for (let i = 0; i <= SEG; i++) {
-      barycenterCorrectedPosition(cfg, qT + (i / SEG) * cfg.orbitDays, v);
-      pts.push(v.clone());
+  const T = days / 36525;
+  const hasMoon = (cfg.satellites || []).length > 0;
+  for (let i = 0; i <= ORBIT_SEG; i++) {
+    if (hasMoon) {
+      // 有卫星的天体（地球）：按时间采样「含地月质心摆动」的真实轨迹，
+      // 而不是把整条质心椭圆按瞬时偏移平移——后者只保证当下穿过本体，
+      // 椭圆其余部分并不等于地球路径。
+      barycenterCorrectedPosition(cfg, days + (i / ORBIT_SEG) * cfg.orbitDays, v);
+    } else {
+      // 无卫星：按偏近点角均匀采样的参考椭圆，要素取 days 所在历元
+      orbitalPointAtE(cfg, (i / ORBIT_SEG) * TAU, v, T);
     }
-  } else {
-    // 无卫星：按偏近点角均匀采样的静态参考椭圆，要素取 ?t= 所在历元
-    for (let i = 0; i <= SEG; i++) {
-      orbitalPointAtE(cfg, (i / SEG) * TAU, v, T);
-      pts.push(v.clone());
-    }
+    arr[i * 3] = v.x; arr[i * 3 + 1] = v.y; arr[i * 3 + 2] = v.z;
   }
+  attr.needsUpdate = true;
+}
 
-  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+function makeOrbitLine(cfg, days) {
+  const geo = new THREE.BufferGeometry();
+  const attr = new THREE.BufferAttribute(new Float32Array((ORBIT_SEG + 1) * 3), 3);
+  attr.setUsage(THREE.DynamicDrawUsage);
+  geo.setAttribute("position", attr);
+  fillOrbitPoints(cfg, days, attr);
+  geo.computeBoundingSphere();
   const mat = new THREE.LineBasicMaterial({
     color: 0x4a5a80, transparent: true, opacity: 0.34,
     depthWrite: false,
@@ -458,7 +463,7 @@ export function createSpace(scene, renderer) {
     }
 
     scene.add(group);
-    const orbitLine = makeOrbitLine(cfg);
+    const orbitLine = makeOrbitLine(cfg, qT);
     scene.add(orbitLine);
 
     // 「最小可见光点」：天体本体严格按真实比例，全景下地球不足 0.001px，
@@ -486,9 +491,22 @@ export function createSpace(scene, renderer) {
   const allSatellites = planets.flatMap(p => p.satellites);
   const moonRecord = allSatellites.find(s => s.cfg.name === "月球") || null;
 
+  // 跳到别的历元时重采轨道线：JPL 要素带每世纪长期项，1850 年的椭圆
+  // 相对 2026 年已转了半度多，不重画的话行星会明显脱离自己的轨道。
+  let orbitEpoch = qT;
+  function rebuildOrbits(days) {
+    if (Math.abs(days - orbitEpoch) < 30) return;
+    orbitEpoch = days;
+    for (const p of planets) {
+      const attr = p.orbitLine.geometry.getAttribute("position");
+      fillOrbitPoints(p.cfg, days, attr);
+      p.orbitLine.geometry.computeBoundingSphere();
+    }
+  }
+
   return {
     stars, sunUniforms, sunGroup, sunMesh, sunRecord, coronas, sunDot,
-    planets, focusables, clickable,
+    planets, focusables, clickable, rebuildOrbits,
     moonMesh: moonRecord ? moonRecord.mesh : null,
     moonDot: moonRecord ? moonRecord.dot : null,
   };

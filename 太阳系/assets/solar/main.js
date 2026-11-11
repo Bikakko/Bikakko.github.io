@@ -16,9 +16,10 @@ import { createCameraRig } from "./camera.js";
 import { createLabels } from "./labels.js";
 import { createLightView } from "./light-view.js";
 import { createLightHud } from "./light-hud.js";
+import { createTimePanel } from "./time-panel.js";
 
 // 构建标记：刷新后可在控制台确认运行的是哪一版
-const BUILD = "2026-11-06 · light-speed";
+const BUILD = "2026-11-11 · real-time";
 console.info("[solar] build " + BUILD);
 window.__solarBuild = BUILD;
 if (qStatic) document.documentElement.classList.add("static");
@@ -68,15 +69,24 @@ const {
 
 // 全景按钮回到远景：rig 在下面创建，回调在此刻之后才会被点击触发
 let rig;
-const hud = createHud({ onHome: () => rig.resetView() });
+const hud = createHud({
+  onHome: () => rig.resetView(),
+  // 跳到别的历元时重采轨道线，要素与行星位置保持同一历元
+  onEpoch: (days) => space.rebuildOrbits(days),
+});
 rig = createCameraRig({ canvas, camera, space, hud });
 const labels = createLabels({ space, rig, camera });
 
-const lightHud = createLightHud({ hud, lightView });
+// 两个左侧抽屉互斥；lightHud 先建，timePanel 用 let 兜住初始化期的回调
+let timePanel;
+const lightHud = createLightHud({
+  hud, lightView, onOpen: () => timePanel && timePanel.setPanelOpen(false),
+});
+timePanel = createTimePanel({ hud, onOpen: () => lightHud.close() });
 
 // 调试探针按需加载，正常访问不下载解析
 if (Q.get("debug") === "1") {
-  import("./debug.js").then((m) => m.installDebug({ space, rig, hud, camera, lightHud }));
+  import("./debug.js").then((m) => m.installDebug({ space, rig, hud, camera, lightHud, timePanel }));
 }
 
 // ?focus=天体 直接聚焦（含太阳/月球），用于截图与分享。
@@ -152,6 +162,7 @@ function animate() {
 
   // 5) 光速层：由统一 simTime 派生光行时，更新波前与光线、刷新 HUD（无独立时钟）
   lightHud.tick();
+  timePanel.tick(dt);
 
   renderer.render(scene, camera);
   // 用本帧的相机矩阵投影标签，避免近距离聚焦时滞后一帧

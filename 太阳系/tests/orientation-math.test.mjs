@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  spinAngleRad, poleAt, poleEquatorialToEcliptic, eclipticToWorld,
+  spinAngleRad, poleAt, equatorialToEcliptic, eclipticToWorld,
   orbitNormalEcliptic, angularSeparationDeg, axisObliquityDeg,
 } from "../assets/solar/orientation-math.js";
 import { SUN_CFG, MOON_CFG, PLANETS } from "../assets/solar/bodies.js";
@@ -70,7 +70,7 @@ test("极轴：地球 J2000 北极 = 赤道 (0,0,1) 转过黄赤交角", () => {
 test("极轴：每世纪线性项外推；无速率时恒定", () => {
   const cfg = { pole: { raDeg: 100, decDeg: 60, raRatePerCentury: 0.5, decRatePerCentury: -0.2 } };
   const p1 = poleAt(cfg, 36525);
-  const direct = poleEquatorialToEcliptic(100.5, 59.8);
+  const direct = equatorialToEcliptic(100.5, 59.8);
   assert.ok(close(p1.x, direct.x, 1e-12));
   assert.ok(close(p1.y, direct.y, 1e-12));
   assert.ok(close(p1.z, direct.z, 1e-12));

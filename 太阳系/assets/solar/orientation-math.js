@@ -9,7 +9,7 @@ import { DEG } from "./config.js";
 // J2000 黄赤交角（IAU 2006/1980 常用值）
 const ECLIPTIC_OBLIQUITY_DEG = 23.4392911;
 
-export function poleEquatorialToEcliptic(raDeg, decDeg) {
+export function equatorialToEcliptic(raDeg, decDeg) {
   const ra = raDeg * DEG, dec = decDeg * DEG;
   const x = Math.cos(dec) * Math.cos(ra);
   const y = Math.cos(dec) * Math.sin(ra);
@@ -50,7 +50,16 @@ export function poleAt(cfg, days) {
   const T = days / 36525;
   const ra = cfg.pole.raDeg + (cfg.pole.raRatePerCentury || 0) * T;
   const dec = cfg.pole.decDeg + (cfg.pole.decRatePerCentury || 0) * T;
-  return poleEquatorialToEcliptic(ra, dec);
+  return equatorialToEcliptic(ra, dec);
+}
+
+/* IAU 交点向量：本体赤道在 ICRF 赤道上的升交点，RA = α₀ + 90°、Dec = 0。
+   W 角就是从这个向量沿本体赤道向东量到本初子午线的。地球的 δ₀ ≈ 90°，
+   k × p 退化成一个数值噪声方向，必须由 α₀ 直接构造而不能取叉积。 */
+export function nodeAt(cfg, days) {
+  const T = days / 36525;
+  const ra = cfg.pole.raDeg + (cfg.pole.raRatePerCentury || 0) * T;
+  return equatorialToEcliptic(ra + 90, 0);
 }
 
 // 自转角 W = W0 + Ẇ·d + Ẅ·d²：线性项先按周期取模，避免极大 simTime
@@ -72,7 +81,7 @@ export function spinAngleRad(spin, days) {
 // IAU 极轴的 W 速率为负时，角速度指向极轴反向；这样金星/天王星的逆行自动成立。
 export function axisObliquityDeg(cfg, days = 0) {
   const T = days / 36525;
-  const pole = poleEquatorialToEcliptic(
+  const pole = equatorialToEcliptic(
     cfg.pole.raDeg + (cfg.pole.raRatePerCentury || 0) * T,
     cfg.pole.decDeg + (cfg.pole.decRatePerCentury || 0) * T,
   );

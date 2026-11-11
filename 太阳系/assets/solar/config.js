@@ -3,6 +3,9 @@
    查询参数、比例基准与单位换算
    天体数据见 bodies.js，按天体分段
    ============================================================ */
+import {
+  utcMsToTTDays, jdToTTDays, civilToUtcMs, parseLocalInput, isValidZone,
+} from "./ephemeris-time.js";
 
 /* ---------- 查询参数：让每个状态可截图 ---------- */
 // 没有 location 时（Node 测试）用空查询串，保证数据模块可直接 import
@@ -12,12 +15,48 @@ const numParam = (k) => {
   const v = parseFloat(Q.get(k));
   return Number.isFinite(v) ? v : null;
 };
-export const qT     = numParam("t") ?? 0;
 export const qAz    = numParam("az");
 export const qEl    = numParam("el");
 export const qDist  = numParam("dist");
 export const qFocus = Q.get("focus");
 export const qStatic = Q.get("static") === "1";
+
+/* ---------- 观测地 ----------
+   ?zone= 接受分钟偏移（480）或 IANA 名（Asia/Shanghai）；缺省跟随系统。
+   ?lat= / ?lon= 缺省由时间面板按系统时区挑一个预设城市。 */
+export const qZone = (() => {
+  const raw = Q.get("zone");
+  if (!raw) return null;
+  const n = parseFloat(raw);
+  if (Number.isFinite(n)) return Math.abs(n) <= 840 ? n : null;
+  return isValidZone(raw) ? raw : null;
+})();
+export const qLat = (() => {
+  const v = numParam("lat");
+  return v !== null && Math.abs(v) <= 90 ? v : null;
+})();
+export const qLon = (() => {
+  const v = numParam("lon");
+  return v !== null && Math.abs(v) <= 180 ? v : null;
+})();
+
+/* ---------- 起始历元 ----------
+   缺省就是「打开页面的此刻」，页面一开即显示真实太阳系状态。
+   ?t=（J2000 TT 天数）/ ?jd=（儒略日）/ ?date=+?zone=（民用时间）显式指定时
+   定格在该历元。轨道线也按这个历元采样（space.js），两者不会错开。
+   Node 测试没有 location，退回 J2000 以保证数据模块可复现。 */
+export const qEpoch = (() => {
+  const t = numParam("t");
+  if (t !== null) return { days: t, live: false };
+  const jd = numParam("jd");
+  if (jd !== null) return { days: jdToTTDays(jd), live: false };
+  const civ = parseLocalInput(Q.get("date") ?? "");
+  if (civ) return { days: utcMsToTTDays(civilToUtcMs(civ, qZone)), live: false };
+  if (typeof location === "undefined") return { days: 0, live: false };
+  return { days: utcMsToTTDays(Date.now()), live: true };
+})();
+export const qT = qEpoch.days;
+export const qLive = qEpoch.live && !qStatic;
 
 // ============================================================
 //  比例基准（严格等比例）

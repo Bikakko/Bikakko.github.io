@@ -8,7 +8,7 @@ import {
   AU_UNIT, KM_PER_UNIT, RADIUS_SCALE, TAU, DEG,
 } from "./config.js";
 
-export function installDebug({ space, rig, hud, camera, lightHud }) {
+export function installDebug({ space, rig, hud, camera, lightHud, timePanel }) {
   const { planets } = space;
   const orbit = rig.orbit;
 
@@ -52,6 +52,22 @@ export function installDebug({ space, rig, hud, camera, lightHud }) {
     },
     get sunRadius() { return SUN_CFG.radius; },
     get simTime() { return hud.getSimTime(); },
+    // 时间探针：核对民用时间、时区、观测地与实时跟随状态
+    get time() {
+      return {
+        simTime: +hud.getSimTime().toFixed(9),
+        utc: new Date(hud.getUtcMs()).toISOString(),
+        live: hud.isLive(), paused: hud.isPaused(), rate: hud.getRate(),
+        zone: hud.getZone(),
+        observer: timePanel ? timePanel.getObserver() : null,
+      };
+    },
+    // 手动推进一帧：浏览器面板隐藏时 rAF 会停摆，用它驱动时间轴
+    advance(dt = 1 / 60) {
+      hud.advance(dt);
+      if (timePanel) timePanel.refresh();
+      return this.time;
+    },
     // 光速时钟探针：用于验证 ?light=1&lt= 截图复现与回放状态
     get light() {
       return lightHud
