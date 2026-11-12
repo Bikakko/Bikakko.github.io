@@ -3,7 +3,7 @@
    - 行星表面：着色器程序化噪声，不加载任何贴图
    - 轨道相机：自实现，远景限制在黄道面上方
    - 触屏：touch-action + 手写 touch 事件
-   - 光速可视化：与天体共用统一 simTime 时间轴 + 波前球面（?light=1 / L 键）
+   - 光速可视化：波前球面默认跟随 simTime，标尺可独立预览（?light=1 / L 键）
    ============================================================ */
 import * as THREE from "three";
 import { Q, qStatic, qFocus } from "./config.js";
@@ -157,7 +157,7 @@ function animate() {
   for (const c of coronas) c.quaternion.copy(camera.quaternion);
   stars.points.position.copy(camera.position);
 
-  // 5) 光速层：由统一 simTime 派生光行时，更新波前与光线、刷新 HUD（无独立时钟）
+  // 5) 光速层：天体位置始终取本帧 simTime；光行时可含标尺的独立预览偏移
   lightHud.tick();
   timePanel.tick(dt);
 

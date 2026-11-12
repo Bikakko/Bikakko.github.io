@@ -156,7 +156,7 @@ export function createHud({ onHome, onEpoch }) {
     shortEl.textContent = `${p2(c.month)}-${p2(c.day)} ${week} ${p2(c.hour)}:${p2(c.minute)}`;
   }
 
-  // 定位到指定历元：退出实时跟随。连续拖动（光速标尺）走这条，不重采轨道
+  // 定位到指定历元：退出实时跟随。光速标尺不调用这里，避免扰动天体历元
   function setSimTime(days) {
     simTime = days;
     live = false;

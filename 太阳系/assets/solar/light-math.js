@@ -1,9 +1,9 @@
 /* ============================================================
    光速 / 统一时间数学（纯函数，无 three / DOM 依赖，可在 Node 直接测试）
 
-   只有一个时间轴：simTime（距 J2000 的天数），由单一倍率推进。
-   行星位置与光波前都由它派生，不存在第二套时钟：
-     lightSec = (simTime - emissionT) · 86400
+   天体只有一个时间轴：simTime（距 J2000 的天数），由单一倍率推进。
+   光波前默认也由它派生；光速标尺仅在 HUD 中附加预览偏移，不改写 simTime：
+     lightSec = (simTime - emissionT) · 86400 + scrubOffsetSec
      波前半径 = c · lightSec / KM_PER_UNIT
    ============================================================ */
 import {
@@ -25,7 +25,7 @@ export function lightSecondsSince(simDays, emissionDays) {
   return Math.max(0, (simDays - emissionDays) * SECONDS_PER_DAY);
 }
 
-// 光行时 → 统一时间轴上的历元（天），供标尺拖动 / ?lt 定格使用
+// 光行时 → 统一时间轴上的历元（天），供 ?lt 定格使用
 export function emissionPlusSeconds(emissionDays, lightSec) {
   return emissionDays + Math.max(0, lightSec) / SECONDS_PER_DAY;
 }

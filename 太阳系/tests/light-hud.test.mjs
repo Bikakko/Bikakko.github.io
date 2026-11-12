@@ -49,10 +49,10 @@ function setup() {
   camera.position.set(0, 120, 400);
   const lightView = createLightView(scene, camera);
 
-  let simTime = 0, rate = "真实时间 1:1";
+  let simTime = 0, rate = "真实时间 1:1", setSimTimeCalls = 0;
   const hud = {
     getSimTime: () => simTime,
-    setSimTime: (v) => { simTime = v; },
+    setSimTime: (v) => { simTime = v; setSimTimeCalls++; },
     rateLabel: () => rate,
     setPaused() {}, togglePaused() {},
   };
@@ -62,6 +62,9 @@ function setup() {
   return {
     lightHud, lightView, camera, nodes,
     setRate: (s) => { rate = s; },
+    getSimTime: () => simTime,
+    advanceSimTime: (days) => { simTime += days; },
+    getSetSimTimeCalls: () => setSimTimeCalls,
     read: () => ({
       rate: nodes.get("lightRate").textContent,
       step: nodes.get("lightBeadStep").textContent,
@@ -96,6 +99,43 @@ test("两行读数取自 hud 倍率与 lightView 步长，任何视距下都是�
     prev = step;
   }
   assert.equal(read().step, "1", "贴到行星附近时应回到逐颗 1 光秒");
+});
+
+test("拖动光速标尺只调整光行时，不改写太阳系 simTime，松开后继续播放", () => {
+  const {
+    lightHud, nodes, getSimTime, advanceSimTime, getSetSimTimeCalls,
+  } = setup();
+  lightHud.tick();
+  const before = getSimTime();
+  const bar = nodes.get("lightBar");
+  const pointer = { pointerId: 1, clientX: 150, preventDefault() {} };
+
+  bar.handlers.pointerdown[0](pointer);
+  const draggedSec = lightHud.getLightSec();
+  assert.ok(draggedSec > 600, "拖到标尺中部应产生有效光行时");
+  assert.equal(getSimTime(), before, "pointerdown 不应移动太阳系历元");
+
+  bar.handlers.pointermove[0]({ ...pointer, clientX: 225 });
+  const movedSec = lightHud.getLightSec();
+  assert.ok(movedSec > draggedSec, "继续拖动应推进光球进度");
+  assert.equal(getSimTime(), before, "pointermove 不应移动太阳系历元");
+  assert.equal(getSetSimTimeCalls(), 0, "整个拖动过程不应调用 setSimTime");
+
+  advanceSimTime(1 / 86400);
+  lightHud.tick();
+  assert.ok(Math.abs(lightHud.getLightSec() - movedSec - 1) < 1e-8,
+    "拖动后的光球应随原模拟时间继续推进，而不是跳回或冻结");
+  bar.handlers.pointerup[0](pointer);
+});
+
+test("光球包裹观察点时不显示额外提示", () => {
+  const { lightHud, lightView, camera, nodes } = setup();
+  camera.position.set(0, 12, 40);
+  const bar = nodes.get("lightBar");
+  bar.handlers.pointerdown[0]({ pointerId: 1, clientX: 225, preventDefault() {} });
+  lightHud.tick();
+  assert.equal(lightView.isInside(), true, "测试场景应确实处于光球内部");
+  assert.ok(!nodes.get("lightSub").textContent.includes("光球已包裹观察点"));
 });
 
 test("位置是时间抽屉里默认收起的二级开关；把手沿用操作说明样式略放大，两个抽屉互不干涉", () => {

@@ -1,10 +1,9 @@
 /* ============================================================
-   太阳系 · Solar · 光速 HUD（统一时间）
+   太阳系 · Solar · 光速 HUD
 
-   没有第二套时钟：光行时 = (hud.getSimTime() - emissionT) · 86400。
-   重播/标尺拖动全部作用于 hud 的同一个 simTime，因此光波前与天体运行
-   永远同步，面板上只显示一个时间流速。标尺拖动只定位、不改变播放状态；
-   面板的开/关统一由左下角的开关按钮负责。
+   天体始终使用 hud 的 simTime。光行时默认由同一历元派生，拖动光速标尺时
+   只记录光行时偏移，不改写 simTime，因此不会扰动行星位置或民用时间。
+   标尺拖动也不改变播放状态；面板的开/关统一由左下角的开关按钮负责。
    ============================================================ */
 import {
   qLight, qLightT, qLightStatic,
@@ -37,11 +36,13 @@ export function createLightHud({ hud, lightView }) {
   let listRecs = [];
   let markerRecs = [];
   let scrubbing = false;
+  let scrubOffsetSec = 0;           // 仅供光球预览，绝不写回太阳系 simTime
   // 脏检查缓存：内容没变就不写 DOM（对照 labels.js 的模式）。
   // 1:1 真实时间下绝大多数帧这些值都不变，避免无谓的样式计算。
   let lastClock = "", lastPct = "", lastSub = "", lastRate = "", lastDesc = "", lastStep = "";
 
-  const getLightSec = () => lightSecondsSince(hud.getSimTime(), emissionT);
+  const getLightSec = () => Math.max(0,
+    lightSecondsSince(hud.getSimTime(), emissionT) + scrubOffsetSec);
 
   // 对数刻度：位置固定，不随时间变化
   for (const t of LIGHT_TICKS) {
@@ -107,7 +108,7 @@ export function createLightHud({ hud, lightView }) {
   function render() {
     if (!on) return;
     const simTime = hud.getSimTime();
-    const sec = lightSecondsSince(simTime, emissionT);
+    const sec = getLightSec();
     const desc = refreshArrivals(simTime);
 
     const clock = formatClock(sec);
@@ -121,8 +122,7 @@ export function createLightHud({ hud, lightView }) {
 
     let passed = 0;
     for (const a of arrivals) if (a.seconds <= sec) passed++;
-    const insideHint = lightView.isInside() ? " · 光球已包裹观察点" : "";
-    const sub = `${desc} · 已越过 ${passed}/8${insideHint}`;
+    const sub = `${desc} · 已越过 ${passed}/8`;
     if (sub !== lastSub) { lastSub = sub; subEl.textContent = sub; }
     for (const r of listRecs) {
       const done = r.seconds <= sec;
@@ -156,6 +156,7 @@ export function createLightHud({ hud, lightView }) {
     lightView.setVisible(on);
     if (on) {
       emissionT = hud.getSimTime();
+      scrubOffsetSec = 0;
       buildArrivals();
       render();
     }
@@ -174,14 +175,16 @@ export function createLightHud({ hud, lightView }) {
   }
   function replay() {
     if (!on) return;
-    // 回到发射时刻：光波前归零，行星也回到同一历元（时间统一）
+    // 重播仍回到发射历元；清除此前仅用于光球预览的拖动偏移
+    scrubOffsetSec = 0;
     hud.setSimTime(emissionT);
     hud.setPaused(false);
     render();
   }
   function scrubTo(sec) {
-    // 只把统一时间定位到目标光行时，不改变播放状态（拖动不再自动暂停）
-    hud.setSimTime(emissionPlusSeconds(emissionT, Math.min(endSeconds, Math.max(0, sec))));
+    // 只定位光球的光行时，不改写 simTime，也不改变太阳系的播放状态
+    const target = Math.min(endSeconds, Math.max(0, sec));
+    scrubOffsetSec = target - lightSecondsSince(hud.getSimTime(), emissionT);
     render();
   }
   function applyScrub(clientX) {

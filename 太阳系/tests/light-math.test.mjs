@@ -90,7 +90,7 @@ test("统一时间：单一倍率推进 simTime，光波前与天体由它共同
   assert.ok(Math.hypot(pNow.x - pEmit.x, pNow.y - pEmit.y, pNow.z - pEmit.z) > 0);
 });
 
-test("光行时 ↔ 统一时间轴换算：重播与标尺拖动", () => {
+test("光行时 ↔ 统一时间轴换算：重播与 ?lt 定格", () => {
   const emission = 10.5;
   for (const sec of [0, 193, 499, 4990, 15005]) {
     const t = emissionPlusSeconds(emission, sec);
