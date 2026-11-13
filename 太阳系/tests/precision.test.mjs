@@ -88,8 +88,10 @@ test("亮点顶点着色器用锚点相对量，不在 shader 里还原世界坐
   const group = scene.children.find(o => o.isGroup);
   for (const pts of group.children.filter(o => o.isPoints)) {
     const vs = pts.material.vertexShader;
-    assert.ok(/uAnchorRel\s*\+\s*uDir\s*\*\s*\(uFrontRel\s*-\s*step\)/.test(vs),
+    assert.ok(/uAnchorRel\s*\+\s*uDir\s*\*\s*\(uHeadRel\s*-\s*step\)/.test(vs),
       "亮点位置必须由锚点相对量合成");
+    assert.ok(/d\s*=\s*uAnchorDist\s*\+\s*uHeadRel\s*-\s*step/.test(vs),
+      "连续相位亮点应使用 CPU 算好的最外侧有效点");
     assert.ok(/modelViewMatrix\s*\*\s*vec4\(rel,\s*1\.0\)/.test(vs),
       "投影的必须是相机相对小量 rel，而不是 uDir * d 的世界坐标");
     assert.ok(!/vec4\(uDir\s*\*\s*d,\s*1\.0\)/.test(vs),
@@ -169,11 +171,13 @@ function beadDeviation(cfg, dist, frames = 12) {
     beadCam.near = Math.min(0.5, Math.max(1e-6, dist * 0.01));
     beadCam.updateProjectionMatrix();
     beadCam.updateMatrixWorld(true);
-    view.update(rayLen / UNITS_PER_LIGHT_SEC + 2, 0);
+    view.update(rayLen / UNITS_PER_LIGHT_SEC + 2, 0, cfg);
 
     const u = target.material.uniforms;
     const dir = u.uDir.value, anchor = u.uAnchorRel.value;
-    const stride = u.uStride.value, R = u.uFront.value;
+    const stride = u.uStride.value;
+    const spacing = stride * UNITS_PER_LIGHT_SEC;
+    const headDist = u.uAnchorDist.value + u.uHeadRel.value;
     // Points 平移到相机位置 → MV 的平移分量趋近 0（CPU double）
     const model = new THREE.Matrix4().makeTranslation(target.position.x, target.position.y, target.position.z);
     const mvBeads = new THREE.Matrix4().multiplyMatrices(beadCam.matrixWorldInverse, model);
@@ -181,11 +185,12 @@ function beadDeviation(cfg, dist, frames = 12) {
     const PMV0 = mul44(f32(beadCam.projectionMatrix), f32(beadCam.matrixWorldInverse));
     const dirF = [f(dir.x), f(dir.y), f(dir.z)];
     const ancF = [f(anchor.x), f(anchor.y), f(anchor.z)];
-    const frontRelF = f(u.uFrontRel.value), frontF = f(R), spF = f(UNITS_PER_LIGHT_SEC);
+    const headRelF = f(u.uHeadRel.value), spF = f(UNITS_PER_LIGHT_SEC);
 
-    for (let n = 0; n < 8; n++) {
-      const k = n * stride;
-      const dD = R - k * UNITS_PER_LIGHT_SEC;
+    // n=0 是当前最外侧亮点；取最靠近行星的 8 颗做近景精度检查
+    for (let j = 0; j < 8; j++) {
+      const n = j;
+      const dD = headDist - n * spacing;
       if (dD < 0 || dD > rayLen) continue;
       const worldRef = new THREE.Vector3(dir.x * dD, dir.y * dD, dir.z * dD);
       const ref = toPx(mul4vD(beadCam.projectionMatrix, mul4vD(beadCam.matrixWorldInverse,
@@ -193,13 +198,13 @@ function beadDeviation(cfg, dist, frames = 12) {
       if (!Number.isFinite(ref[0]) || Math.abs(ref[0]) > 1e5) continue;
 
       // 旧路径：shader 里 uDir*d 得到 ~300 量级世界坐标，再乘 viewMatrix
-      const stepF = f(f(k) * spF);
-      const dF = f(frontF - stepF);
+      const stepF = f(f(f(n) * f(stride)) * spF);
+      const dF = f(dD);
       const naivePos = [f(dirF[0] * dF), f(dirF[1] * dF), f(dirF[2] * dF), 1];
       naive = Math.max(naive, pxDist(toPx(mul4v(PMV0, naivePos)), ref));
 
-      // 新路径：锚点相对小量
-      const deltaF = f(frontRelF - stepF);
+      // 新路径：最外侧有效点与锚点都在 CPU 侧对齐，shader 只算小量
+      const deltaF = f(headRelF - stepF);
       const rel = [f(ancF[0] + f(dirF[0] * deltaF)), f(ancF[1] + f(dirF[1] * deltaF)),
         f(ancF[2] + f(dirF[2] * deltaF)), 1];
       fixed = Math.max(fixed, pxDist(toPx(mul4v(PMV, rel)), ref));

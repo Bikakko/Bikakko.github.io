@@ -6,16 +6,16 @@
      全部移除，画面里只剩一套统一普通亮度的经纬网。赤道/黄道线由
      lat=0 的网格线给出；普通子午线加密（16 → 32 条）。
    - 网格线有屏幕像素宽度下限，光球刚出发时也看得见。
-   - 八条太阳→行星光线，按世界半径裁断，前端高亮；每条光线上按整数光秒
-     间隔排布明亮的圆点亮点，随波前以光速流动。间隔按视距自适应抽稀，
-     任何缩放下都是分离可数的圆点，HUD 同步显示当前是每几光秒一颗。
+   - 八条太阳→行星光线始终完整连接两端，不按波前裁断，避免球缘抖动穿模；
+     光秒亮点也与光球解耦：仅在聚焦某颗行星时显示该行星的完整光子流，
+     按太阳系时间持续流动。间隔按视距自适应抽稀，HUD 同步显示。
    自定义 ShaderMaterial 必须注入对数深度片段（见 shaders.js）。
    ============================================================ */
 import * as THREE from "three";
 import { PLANETS } from "./bodies.js";
 import { orbitalPosition } from "./orbit-math.js";
 import { frontRadius } from "./light-math.js";
-import { UNITS_PER_LIGHT_SEC } from "./config.js";
+import { UNITS_PER_LIGHT_SEC, SECONDS_PER_DAY } from "./config.js";
 import {
   LOGDEPTH_PARS_VERT, LOGDEPTH_VERT, LOGDEPTH_PARS_FRAG, LOGDEPTH_FRAG,
 } from "./shaders.js";
@@ -102,46 +102,36 @@ export function createLightView(scene, camera) {
      唯一的「高亮」元素，已全部取消。赤道/黄道线由球面着色器的 lat=0
      网格线给出，与所有子午线一样是统一普通亮度，不再有独立的高亮环。 */
 
-  /* ---------- 八条光线（相机相对坐标） ----------
+  /* ---------- 八条完整光线（相机相对坐标） ----------
      顶点存「世界坐标 − 相机位置」，line.position 每帧跟随相机。这样
      modelViewMatrix 的平移分量趋近 0，投影不再让两个 10 量级的大数在
-     float32 下相消——否则贴近行星时光线端点会整像素抖动、脱离行星。
-     裁断用的世界坐标在 shader 里加回相机位置即可（误差 ~1e-6 单位
-     ≈ 0.001 光秒，远小于波前头部 6% 的高亮区）。 */
+     float32 下相消。光线不按波前裁断，避免光球边缘的精度误差造成抖动。 */
   const rayMatFor = () => new THREE.ShaderMaterial({
-    uniforms: { uFront: { value: 0 } },
+    uniforms: {},
     transparent: true, depthWrite: false, depthTest: false,
     blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */ `
-      varying vec3 vWorld;
       ${LOGDEPTH_PARS_VERT}
       void main() {
-        vWorld = (modelMatrix * vec4(position, 1.0)).xyz;
         gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
         ${LOGDEPTH_VERT}
       }
     `,
     fragmentShader: /* glsl */ `
-      uniform float uFront;
-      varying vec3 vWorld;
       ${LOGDEPTH_PARS_FRAG}
       void main() {
-        float d = length(vWorld);
-        if (d > uFront) discard;
-        // 波前附近 6% 的区段做「光子头」高亮
-        float head = smoothstep(uFront * 0.94, uFront, d);
-        vec3 col = mix(vec3(0.42, 0.60, 1.0), vec3(1.0, 0.85, 0.55), head);
-        gl_FragColor = vec4(col, 0.22 + 0.65 * head);
+        gl_FragColor = vec4(0.42, 0.60, 1.0, 0.32);
         ${LOGDEPTH_FRAG}
       }
     `,
   });
 
-  /* ---------- 1 光秒亮点（真正的圆点精灵） ----------
-     每条太阳→行星光线上每隔「uStride 光秒」有一个亮点：第 n 个亮点在
-     d = uFront − n·uStride·UNITS_PER_LIGHT_SEC，相当于「n·uStride 秒前
-     发出的光子」，随波前一同以光速向外流动；按波前（d ≤ uFront，由公式
-     自动满足）和光线终点行星（d ≤ uRayLen）裁断。
+  /* ---------- 1 光秒亮点（真正的圆点精灵，与光球解耦） ----------
+     只有当前聚焦行星的 Points 可见，沿太阳→行星全程每隔「uStride 光秒」
+     有一个亮点。相位由 simTime 独立推导，与光球光行时、标尺和重置无关；
+     d = phase + n·spacing，到达行星的点消失，太阳端持续补入新点。
+     CPU 找出当前最外侧亮点 head，shader 再以 head − n·spacing 放置，
+     保留近距离精度。
      uStride 是按视距自适应的整数抽稀步长（见 update）：拉近到 1 光秒的
      屏幕间距超过 BEAD_MIN_GAP_PX 时 uStride=1，就是逐颗的 1 光秒亮点；
      远景下自动跳到 2、3…N 光秒一颗，HUD 会同步显示当前间隔。
@@ -152,9 +142,9 @@ export function createLightView(scene, camera) {
      点径不超过相邻点屏幕间距的 3/4，任何缩放下都不重叠。
 
      精度：顶点存的是「相对锚点」的小量。锚点取光线上离相机最近的点，
-     uAnchorRel = 锚点 − 相机、uFrontRel = 波前 − 锚点都在 CPU 用 double
-     算完；Points 自身再平移到相机位置，于是 modelViewMatrix 的平移 ≈ 0。
-     贴近行星时这三个量全是 ~1e-4 的小量，float32 足够；直接算
+     uAnchorRel = 锚点 − 相机、uHeadRel = 最外侧亮点 − 锚点都在 CPU 用
+     double 算完；Points 自身再平移到相机位置，于是 modelViewMatrix 的
+     平移 ≈ 0。贴近行星时这些相对量足够小；直接算
      modelViewMatrix * (uDir * d) 会让两个 300 量级的数在 shader 里相消，
      亮点会整像素抖动、脱离已经修好的光线。 */
   const beadIdx = new Float32Array(MAX_BEADS * 3);
@@ -164,12 +154,12 @@ export function createLightView(scene, camera) {
 
   const makeBeadMat = () => new THREE.ShaderMaterial({
     uniforms: {
-      uFront:      { value: 0 },
       uDir:        { value: new THREE.Vector3(1, 0, 0) },
       uRayLen:     { value: 0 },
       uStride:     { value: 1 },                      // 相邻亮点相隔几个光秒
       uAnchorRel:  { value: new THREE.Vector3() },    // 锚点 − 相机（CPU double）
-      uFrontRel:   { value: 0 },                      // 波前半径 − 锚点距离
+      uAnchorDist: { value: 0 },                      // 锚点的日心距离
+      uHeadRel:    { value: 0 },                      // 最外侧亮点 − 锚点距离
       uDotSpacing: { value: UNITS_PER_LIGHT_SEC },   // 1 光秒对应的世界单位
       uPointPx:    { value: BEAD_PX },
       uProjScale:  { value: 900 },                  // (视口高/2)/tan(fov/2)，每帧刷新
@@ -178,12 +168,12 @@ export function createLightView(scene, camera) {
     transparent: true, depthWrite: false, depthTest: false,
     blending: THREE.AdditiveBlending,
     vertexShader: /* glsl */ `
-      uniform float uFront;
       uniform vec3  uDir;
       uniform float uRayLen;
       uniform float uStride;
       uniform vec3  uAnchorRel;
-      uniform float uFrontRel;
+      uniform float uAnchorDist;
+      uniform float uHeadRel;
       uniform float uDotSpacing;
       uniform float uPointPx;
       uniform float uProjScale;
@@ -191,11 +181,11 @@ export function createLightView(scene, camera) {
       varying float vAlpha;
       ${LOGDEPTH_PARS_VERT}
       void main() {
-        float k = position.x * uStride;          // 这颗光子是几秒前发出的
-        float step = k * uDotSpacing;
-        float d = uFront - step;                 // 世界半径，只用于裁断
-        // 相机相对小量：uFrontRel − step 在近距时两边都是小量，无相消
-        vec3 rel = uAnchorRel + uDir * (uFrontRel - step);
+        float step = position.x * uStride * uDotSpacing;
+        // head 由 CPU 按独立连续相位定位；只按太阳与行星两端裁断
+        float d = uAnchorDist + uHeadRel - step;
+        // 相机相对小量：uHeadRel − step 在近距时两边都是小量，无相消
+        vec3 rel = uAnchorRel + uDir * (uHeadRel - step);
         vec4 mv = modelViewMatrix * vec4(rel, 1.0);
         gl_Position = projectionMatrix * mv;
         // gl_Position.w 就是该点的视空间深度
@@ -207,7 +197,7 @@ export function createLightView(scene, camera) {
         float fade = smoothstep(0.8, 3.0, gapPx);
         vAlpha = fade;
         gl_PointSize = max(sizePx, 0.0) * uPixelRatio;
-        // 光未走到 / 超出行星 / 远景点密到看不见 → 移出裁剪空间
+        // 超出太阳→行星线段 / 远景点密到看不见 → 移出裁剪空间
         if (d < 0.0 || d > uRayLen || fade < 0.01) {
           gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
           gl_PointSize = 0.0;
@@ -249,7 +239,7 @@ export function createLightView(scene, camera) {
     return {
       cfg, arr, geo, mat, line, beads, beadMat,
       pos: new THREE.Vector3(), dir: new THREE.Vector3(), anchorRel: new THREE.Vector3(),
-      rayLen: 0, frontRel: 0,
+      rayLen: 0, anchorDist: 0, headRel: 0,
     };
   });
 
@@ -258,7 +248,7 @@ export function createLightView(scene, camera) {
   let lastBeadCount = -1;
   let beadStep = 1;
 
-  function update(lightSec, simTime) {
+  function update(lightSec, simTime, focusCfg = null) {
     const R = frontRadius(lightSec);
     for (const m of scalable) m.scale.setScalar(R);
 
@@ -269,59 +259,68 @@ export function createLightView(scene, camera) {
     cameraInside = _camPos.lengthSq() < R * R;
     sphereUniforms.uInside.value = cameraInside ? 1 : 0;
 
-    // 亮点淡出用的屏幕尺度：(视口高/2)/tan(fov/2)，与 renderer 的像素比一致
-    const projScale = (window.innerHeight * 0.5) / Math.tan(camera.fov * Math.PI / 360);
-    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
-
+    const focusIndex = PLANETS.indexOf(focusCfg);
     let nearDist = Infinity;
-    for (const r of rays) {
+    for (let i = 0; i < rays.length; i++) {
+      const r = rays[i];
       orbitalPosition(r.cfg, simTime, r.pos);
       r.rayLen = r.pos.length();
       r.dir.copy(r.pos).divideScalar(r.rayLen);
-      // 锚点 = 光线上离相机最近的点。以它为原点，锚点附近的量全是小量。
-      const anchor = Math.min(r.rayLen, Math.max(0, _camPos.dot(r.dir)));
-      r.anchorRel.copy(r.dir).multiplyScalar(anchor).sub(_camPos);
-      r.frontRel = R - anchor;
-      nearDist = Math.min(nearDist, r.anchorRel.length());
-    }
 
-    // 抽稀步长：让最近处的相邻亮点在屏幕上至少隔 BEAD_MIN_GAP_PX。
-    // 取整到「光秒」，亮点始终落在真实的整秒发射时刻上；八条光线共用一个
-    // 步长，HUD 上的「每 N 光秒一个亮点」才是准确读数。
-    const gap1 = UNITS_PER_LIGHT_SEC * projScale / Math.max(nearDist, 1e-9);
-    beadStep = Math.max(1, Math.ceil(BEAD_MIN_GAP_PX / Math.max(gap1, 1e-9)));
-
-    let beadCount = 1;
-    for (const r of rays) {
-      // 差值在 CPU 用 double 算完再写入 Float32Array：贴近行星时端点是
-      // ~1e-4 的小量，float32 精度足够；直接存世界坐标会被量化到 ~3e-5
+      // 光线始终完整连接太阳与行星；亮点只显示当前聚焦目标。
       r.line.position.copy(_camPos);
-      r.beads.position.copy(_camPos);
       r.arr[0] = -_camPos.x; r.arr[1] = -_camPos.y; r.arr[2] = -_camPos.z;
       r.arr[3] = r.pos.x - _camPos.x;
       r.arr[4] = r.pos.y - _camPos.y;
       r.arr[5] = r.pos.z - _camPos.z;
       r.geo.attributes.position.needsUpdate = true;
-      r.mat.uniforms.uFront.value = R;
+      r.beads.visible = i === focusIndex;
+      if (i !== focusIndex) continue;
 
-      const bu = r.beadMat.uniforms;
-      bu.uFront.value = R;
-      bu.uDir.value.copy(r.dir);
-      bu.uRayLen.value = r.rayLen;
-      bu.uStride.value = beadStep;
-      bu.uAnchorRel.value.copy(r.anchorRel);
-      bu.uFrontRel.value = r.frontRel;
-      bu.uProjScale.value = projScale;
-      bu.uPixelRatio.value = pixelRatio;
-
-      // 有效亮点满足 d = R − n·step·spacing ∈ [0, rayLen]
-      const need = Math.floor(Math.min(R, r.rayLen) / (UNITS_PER_LIGHT_SEC * beadStep)) + 1;
-      beadCount = Math.max(beadCount, need);
+      // 锚点 = 光线上离相机最近的点。以它为原点，锚点附近的量全是小量。
+      r.beads.position.copy(_camPos);
+      const anchor = Math.min(r.rayLen, Math.max(0, _camPos.dot(r.dir)));
+      r.anchorDist = anchor;
+      r.anchorRel.copy(r.dir).multiplyScalar(anchor).sub(_camPos);
+      nearDist = r.anchorRel.length();
     }
 
-    // 8 条光线共享同一份序号缓冲：drawRange 取各光线所需序号的最大值，
-    // 不再让全部 20000 顶点每帧白跑 vertex shader。
-    beadCount = Math.min(MAX_BEADS, beadCount);
+    if (focusIndex < 0) {
+      beadStep = 1;
+      if (lastBeadCount !== 0) {
+        beadGeo.setDrawRange(0, 0);
+        lastBeadCount = 0;
+      }
+      return;
+    }
+
+    // 抽稀步长只看聚焦光线：让最近处的相邻亮点至少隔 BEAD_MIN_GAP_PX。
+    const projScale = (window.innerHeight * 0.5) / Math.tan(camera.fov * Math.PI / 360);
+    const pixelRatio = Math.min(window.devicePixelRatio || 1, 2);
+    const gap1 = UNITS_PER_LIGHT_SEC * projScale / Math.max(nearDist, 1e-9);
+    beadStep = Math.max(1, Math.ceil(BEAD_MIN_GAP_PX / Math.max(gap1, 1e-9)));
+    const beadSpacing = UNITS_PER_LIGHT_SEC * beadStep;
+
+    // 亮点使用 simTime 的独立相位，光球归零或尚未到达行星时也保持全程流动。
+    const beadDistance = simTime * SECONDS_PER_DAY * UNITS_PER_LIGHT_SEC;
+    const beadPhase = ((beadDistance % beadSpacing) + beadSpacing) % beadSpacing;
+    const r = rays[focusIndex];
+    const headIndex = Math.floor(Math.max(0, r.rayLen - beadPhase) / beadSpacing);
+    const headDist = beadPhase + headIndex * beadSpacing;
+    r.headRel = headDist - r.anchorDist;
+
+    const bu = r.beadMat.uniforms;
+    bu.uDir.value.copy(r.dir);
+    bu.uRayLen.value = r.rayLen;
+    bu.uStride.value = beadStep;
+    bu.uAnchorRel.value.copy(r.anchorRel);
+    bu.uAnchorDist.value = r.anchorDist;
+    bu.uHeadRel.value = r.headRel;
+    bu.uProjScale.value = projScale;
+    bu.uPixelRatio.value = pixelRatio;
+
+    // 共享序号缓冲只绘制当前聚焦光线需要的有限点列。
+    const beadCount = Math.min(MAX_BEADS, headIndex + 1);
     if (beadCount !== lastBeadCount) {
       beadGeo.setDrawRange(0, beadCount);
       lastBeadCount = beadCount;

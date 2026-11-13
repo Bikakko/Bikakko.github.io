@@ -78,7 +78,7 @@ rig = createCameraRig({ canvas, camera, space, hud });
 const labels = createLabels({ space, rig, camera });
 
 // 两个抽屉互不干涉，可同时打开 / 关闭（?time=1 与 ?light=1 也可同给）
-const lightHud = createLightHud({ hud, lightView });
+const lightHud = createLightHud({ hud, lightView, getFocusTarget: rig.getFocusTarget });
 const timePanel = createTimePanel({ hud });
 
 // 调试探针按需加载，正常访问不下载解析

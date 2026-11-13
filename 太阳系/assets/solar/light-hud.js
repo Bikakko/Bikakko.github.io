@@ -14,7 +14,7 @@ import {
   toLogAxis, fromLogAxis, LOG_AXIS_MAX, LIGHT_TICKS,
 } from "./light-math.js";
 
-export function createLightHud({ hud, lightView }) {
+export function createLightHud({ hud, lightView, getFocusTarget = () => null }) {
   const root = document.getElementById("light");
   const toggleBtn = document.getElementById("lightToggle");
   const clockEl = document.getElementById("lightClock");
@@ -26,11 +26,12 @@ export function createLightHud({ hud, lightView }) {
   const ticksEl = document.getElementById("lightTicks");
   const planetsEl = document.getElementById("lightPlanets");
   const listEl = document.getElementById("lightList");
-  const replayBtn = document.getElementById("lightReplay");
+  const resetBtn = document.getElementById("lightReset");
   const beadStepEl = document.getElementById("lightBeadStep");
 
   let on = false;
-  let emissionT = hud.getSimTime();   // 光脉冲发射历元（天）
+  // 首次打开前不启动光速模拟；只有第一次打开才记录发射历元。
+  let emissionT = null;               // 光脉冲发射历元（天）
   let arrivals = [];
   let endSeconds = LOG_AXIS_MAX;
   let listRecs = [];
@@ -41,7 +42,7 @@ export function createLightHud({ hud, lightView }) {
   // 1:1 真实时间下绝大多数帧这些值都不变，避免无谓的样式计算。
   let lastClock = "", lastPct = "", lastSub = "", lastRate = "", lastDesc = "", lastStep = "";
 
-  const getLightSec = () => Math.max(0,
+  const getLightSec = () => emissionT === null ? 0 : Math.max(0,
     lightSecondsSince(hud.getSimTime(), emissionT) + scrubOffsetSec);
 
   // 对数刻度：位置固定，不随时间变化
@@ -143,8 +144,9 @@ export function createLightHud({ hud, lightView }) {
 
   function tick() {
     if (!on) return;
-    // 脉冲间隔是固定光秒（物理量），与倍率无关
-    lightView.update(getLightSec(), hud.getSimTime());
+    // 光秒亮点只跟随当前聚焦的八大行星；光球仍按自身光行时扩散。
+    const focus = getFocusTarget();
+    lightView.update(getLightSec(), hud.getSimTime(), focus ? focus.cfg : null);
     render();
   }
 
@@ -155,8 +157,12 @@ export function createLightHud({ hud, lightView }) {
     toggleBtn.textContent = on ? "光速 ▾" : "光速 ▸";
     lightView.setVisible(on);
     if (on) {
-      emissionT = hud.getSimTime();
-      scrubOffsetSec = 0;
+      if (emissionT === null) {
+        // 首次打开才从零发射；此前不累计任何后台光行时。
+        emissionT = hud.getSimTime();
+        scrubOffsetSec = 0;
+      }
+      // 之后重新打开只恢复显示：emissionT 与拖动偏移都保留。
       buildArrivals();
       render();
     }
@@ -173,12 +179,11 @@ export function createLightHud({ hud, lightView }) {
     hud.togglePaused();
     render();
   }
-  function replay() {
+  function reset() {
     if (!on) return;
-    // 重播仍回到发射历元；清除此前仅用于光球预览的拖动偏移
+    // 唯一的手动归零入口：重置光球，不改变太阳系历元或播放/暂停状态
+    emissionT = hud.getSimTime();
     scrubOffsetSec = 0;
-    hud.setSimTime(emissionT);
-    hud.setPaused(false);
     render();
   }
   function scrubTo(sec) {
@@ -195,7 +200,7 @@ export function createLightHud({ hud, lightView }) {
   }
 
   toggleBtn.addEventListener("click", (e) => { e.stopPropagation(); toggle(); });
-  replayBtn.addEventListener("click", replay);
+  resetBtn.addEventListener("click", reset);
 
   barEl.addEventListener("pointerdown", (e) => {
     scrubbing = true;
@@ -216,13 +221,13 @@ export function createLightHud({ hud, lightView }) {
   barEl.addEventListener("pointerup", endScrub);
   barEl.addEventListener("pointercancel", endScrub);
 
-  // L 开关、R 重播、P 播放/暂停。空格统一交给 hud（暂停同一个 simTime）。
+  // L 开关、R 重置光球、P 播放/暂停。空格统一交给 hud（暂停同一个 simTime）。
   addEventListener("keydown", (e) => {
     if (e.target && e.target.closest
         && e.target.closest("button, a, input, textarea, select, .lbl")) return;
     if (e.code === "KeyL") { toggle(); return; }
     if (!on) return;
-    if (e.code === "KeyR") replay();
+    if (e.code === "KeyR") reset();
     else if (e.code === "KeyP") togglePlay();
   });
 

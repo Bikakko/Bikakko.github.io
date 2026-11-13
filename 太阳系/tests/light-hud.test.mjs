@@ -33,21 +33,28 @@ function el(id) {
 const IDS = [
   "light", "lightToggle", "lightClock", "lightSub", "lightRate", "lightBar",
   "lightFill", "lightCursor", "lightTicks", "lightPlanets", "lightList",
-  "lightReplay", "lightBeadStep",
+  "lightReset", "lightBeadStep",
 ];
 
-function setup() {
+function setup({ autoOpen = true, focusCfg = PLANETS[2] } = {}) {
   const nodes = new Map(IDS.map(id => [id, el(id)]));
   globalThis.document = {
     getElementById: id => nodes.get(id) ?? null,
     createElement: () => el(""),
   };
-  globalThis.addEventListener = () => {};
+  const globalHandlers = {};
+  globalThis.addEventListener = (type, fn) => { (globalHandlers[type] ||= []).push(fn); };
 
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(48, 16 / 9, 0.5, 6000);
   camera.position.set(0, 120, 400);
   const lightView = createLightView(scene, camera);
+  const updateLightView = lightView.update.bind(lightView);
+  let lightViewUpdates = 0;
+  lightView.update = (...args) => {
+    lightViewUpdates++;
+    return updateLightView(...args);
+  };
 
   let simTime = 0, rate = "真实时间 1:1", setSimTimeCalls = 0;
   const hud = {
@@ -56,15 +63,23 @@ function setup() {
     rateLabel: () => rate,
     setPaused() {}, togglePaused() {},
   };
-  const lightHud = createLightHud({ hud, lightView });
-  nodes.get("lightToggle").handlers.click[0]({ stopPropagation() {} });
+  let focusTarget = focusCfg ? { cfg: focusCfg } : null;
+  const lightHud = createLightHud({ hud, lightView, getFocusTarget: () => focusTarget });
+  if (autoOpen) nodes.get("lightToggle").handlers.click[0]({ stopPropagation() {} });
 
   return {
     lightHud, lightView, camera, nodes,
+    group: scene.children.find(o => o.isGroup),
+    beads: scene.children.find(o => o.isGroup).children.filter(o => o.isPoints),
+    setFocus: (cfg) => { focusTarget = cfg ? { cfg } : null; },
     setRate: (s) => { rate = s; },
     getSimTime: () => simTime,
     advanceSimTime: (days) => { simTime += days; },
     getSetSimTimeCalls: () => setSimTimeCalls,
+    getLightViewUpdates: () => lightViewUpdates,
+    pressKey: (code) => {
+      for (const fn of globalHandlers.keydown || []) fn({ code, target: null });
+    },
     read: () => ({
       rate: nodes.get("lightRate").textContent,
       step: nodes.get("lightBeadStep").textContent,
@@ -73,7 +88,7 @@ function setup() {
 }
 
 test("两行读数取自 hud 倍率与 lightView 步长，任何视距下都是正整数而非 NaN", () => {
-  const { lightHud, lightView, camera, setRate, read } = setup();
+  const { lightHud, lightView, camera, setRate, setFocus, read } = setup();
   lightHud.tick();
   assert.equal(read().rate, "真实时间 1:1");
   assert.ok(/^[1-9]\d*$/.test(read().step), `步长应是正整数，实得 ${read().step}`);
@@ -86,6 +101,7 @@ test("两行读数取自 hud 倍率与 lightView 步长，任何视距下都是�
 
   // 从海王星外侧一路贴到表面：步长有限、单调不增，最终回到逐颗 1 光秒
   const neptune = PLANETS[PLANETS.length - 1];
+  setFocus(neptune);
   const p = orbitalPosition(neptune, 0, new THREE.Vector3());
   let prev = Infinity;
   for (const mult of [10000, 3000, 1000, 300, 100]) {
@@ -99,6 +115,56 @@ test("两行读数取自 hud 倍率与 lightView 步长，任何视距下都是�
     prev = step;
   }
   assert.equal(read().step, "1", "贴到行星附近时应回到逐颗 1 光秒");
+});
+
+test("首次打开前不运行也不累计光速进度，首次打开从零开始", () => {
+  const {
+    lightHud, nodes, advanceSimTime, getLightViewUpdates, pressKey,
+  } = setup({ autoOpen: false });
+
+  advanceSimTime(300 / 86400);
+  lightHud.tick();
+  lightHud.tick();
+  pressKey("KeyR");
+  assert.equal(getLightViewUpdates(), 0, "首次打开前不应更新光球、光线或亮点");
+  assert.equal(lightHud.getLightSec(), 0, "首次打开前不应在后台累计光行时");
+
+  nodes.get("lightToggle").handlers.click[0]({ stopPropagation() {} });
+  assert.equal(lightHud.getLightSec(), 0, "首次打开应从零发射，而非补算页面加载后的时间");
+  lightHud.tick();
+  assert.equal(getLightViewUpdates(), 1);
+  advanceSimTime(1 / 86400);
+  lightHud.tick();
+  assert.ok(Math.abs(lightHud.getLightSec() - 1) < 1e-8);
+});
+
+test("光秒亮点只在面板打开且聚焦行星时显示当前目标", () => {
+  const { lightHud, nodes, group, beads, setFocus } = setup({ focusCfg: null });
+  lightHud.tick();
+  assert.equal(group.visible, true);
+  assert.ok(beads.every(b => !b.visible), "没有聚焦行星时不显示任何光秒亮点");
+
+  const earth = PLANETS[2], mars = PLANETS[3];
+  setFocus(earth);
+  lightHud.tick();
+  assert.equal(beads[2].visible, true);
+  assert.equal(beads.filter(b => b.visible).length, 1, "只显示聚焦行星的亮点");
+
+  setFocus(mars);
+  lightHud.tick();
+  assert.equal(beads[2].visible, false);
+  assert.equal(beads[3].visible, true);
+
+  nodes.get("lightToggle").handlers.click[0]({ stopPropagation() {} });
+  assert.equal(group.visible, false, "关闭光速面板后整个视觉层（含亮点）都隐藏");
+  nodes.get("lightToggle").handlers.click[0]({ stopPropagation() {} });
+  lightHud.tick();
+  assert.equal(group.visible, true);
+  assert.equal(beads[3].visible, true, "重开面板后仍按当前聚焦目标显示");
+
+  setFocus(null);
+  lightHud.tick();
+  assert.ok(beads.every(b => !b.visible), "取消聚焦后立即隐藏亮点");
 });
 
 test("拖动光速标尺只调整光行时，不改写太阳系 simTime，松开后继续播放", () => {
@@ -126,6 +192,37 @@ test("拖动光速标尺只调整光行时，不改写太阳系 simTime，松开
   assert.ok(Math.abs(lightHud.getLightSec() - movedSec - 1) < 1e-8,
     "拖动后的光球应随原模拟时间继续推进，而不是跳回或冻结");
   bar.handlers.pointerup[0](pointer);
+});
+
+test("面板关闭再打开保留进度，只有重置按钮或 R 键将光球归零", () => {
+  const {
+    lightHud, nodes, getSimTime, advanceSimTime, getSetSimTimeCalls, pressKey,
+  } = setup();
+  const toggle = () => nodes.get("lightToggle").handlers.click[0]({ stopPropagation() {} });
+
+  advanceSimTime(120 / 86400);
+  lightHud.tick();
+  assert.ok(Math.abs(lightHud.getLightSec() - 120) < 1e-8);
+  toggle();
+  advanceSimTime(30 / 86400);
+  toggle();
+  assert.ok(Math.abs(lightHud.getLightSec() - 150) < 1e-8,
+    "重新打开应接着隐藏期间的进度，不应重新发射");
+
+  const beforeReset = getSimTime();
+  const timeWrites = getSetSimTimeCalls();
+  nodes.get("lightReset").handlers.click[0]({});
+  assert.equal(lightHud.getLightSec(), 0, "重置按钮应让光球归零");
+  assert.equal(getSimTime(), beforeReset, "重置不应回退太阳系历元");
+  assert.equal(getSetSimTimeCalls(), timeWrites);
+
+  advanceSimTime(20 / 86400);
+  lightHud.tick();
+  const beforeKeyReset = getSimTime();
+  pressKey("KeyR");
+  assert.equal(lightHud.getLightSec(), 0, "R 键应绑定同一个重置操作");
+  assert.equal(getSimTime(), beforeKeyReset);
+  assert.equal(getSetSimTimeCalls(), timeWrites);
 });
 
 test("光球包裹观察点时不显示额外提示", () => {
